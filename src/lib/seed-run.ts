@@ -1,23 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './prisma';
 import { demoPasswordHash } from './password';
-import { buildSeed } from './seed-data';
+import { buildSeed, orgOnly } from './seed-data';
 import { todayYMD } from './dates';
 import { resetAllowed } from './seed-guard';
 
-async function wipe() {
-  const prisma = db();
+type Tx = Omit<ReturnType<typeof db>, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>;
+
+/** Messages, tasks, approvals, and the rest of the working data. People and channels stay. */
+export async function clearBusinessData(prisma: Tx) {
   await prisma.taskComment.deleteMany();
   await prisma.aiActivity.deleteMany();
-  await prisma.appSetting.deleteMany();
   await prisma.realtimeEvent.deleteMany();
   await prisma.reaction.deleteMany();
   await prisma.attachment.deleteMany();
   await prisma.message.updateMany({ data: { parentId: null } });
   await prisma.message.deleteMany();
   await prisma.channelRead.deleteMany();
-  await prisma.channelMember.deleteMany();
-  await prisma.channel.deleteMany();
   await prisma.eventAttendee.deleteMany();
   await prisma.calendarEvent.deleteMany();
   await prisma.subtask.deleteMany();
@@ -34,13 +33,37 @@ async function wipe() {
   await prisma.okr.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.announcement.deleteMany();
+}
+
+async function wipe() {
+  const prisma = db();
+  await clearBusinessData(prisma);
+  await prisma.appSetting.deleteMany();
+  await prisma.channelMember.deleteMany();
+  await prisma.channel.deleteMany();
   await prisma.session.deleteMany();
   await prisma.user.deleteMany();
   await prisma.department.deleteMany();
   await prisma.company.deleteMany();
 }
 
-export async function seedDatabase(opts: { reset?: boolean; today?: string } = {}) {
+/** Idempotent wipe of working data on a live database. Does not touch users, departments, or channels. */
+export async function resetBusinessData() {
+  const prisma = db();
+  await prisma.$transaction(async (tx) => {
+    await clearBusinessData(tx);
+  }, { timeout: 20_000 });
+  const [users, departments, channels, messages, tasks] = await Promise.all([
+    prisma.user.count(),
+    prisma.department.count(),
+    prisma.channel.count(),
+    prisma.message.count(),
+    prisma.task.count(),
+  ]);
+  return { ok: true as const, users, departments, channels, messages, tasks };
+}
+
+export async function seedDatabase(opts: { reset?: boolean; demo?: boolean; today?: string } = {}) {
   const prisma = db();
   if (opts.reset && !resetAllowed()) {
     throw new Error('本番環境では ALLOW_SEED_RESET=true を明示しない限りデータを初期化できません');
@@ -48,13 +71,13 @@ export async function seedDatabase(opts: { reset?: boolean; today?: string } = {
   const existing = await prisma.company.findUnique({ where: { id: 'gix' } }).catch(() => null);
   const userCount = await prisma.user.count().catch(() => 0);
   if (!opts.reset && (existing || userCount > 0)) {
-    return { skipped: true as const };
+    return { skipped: true as const, demo: !!opts.demo };
   }
   if (existing || userCount) await wipe();
 
   const now = Date.now();
   const today = opts.today || todayYMD(new Date(now));
-  const data = buildSeed(today);
+  const data = opts.demo ? buildSeed(today) : orgOnly(buildSeed(today));
   const at = (minutesAgo: number) => new Date(now - minutesAgo * 60000);
   const passwordHash = demoPasswordHash();
 
@@ -234,5 +257,5 @@ export async function seedDatabase(opts: { reset?: boolean; today?: string } = {
   for (const row of data.attendance) {
     await prisma.attendance.create({ data: { id: randomUUID(), ...row } });
   }
-  return { skipped: false as const, users: data.users.length };
+  return { skipped: false as const, demo: !!opts.demo, users: data.users.length };
 }

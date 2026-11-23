@@ -4,7 +4,8 @@ import { applyDecision, canSeeApproval } from './approvals';
 import { extractMentions } from './mentions';
 import { md } from './markdown';
 import { hashPassword, verifyPassword, DEMO_PASSWORD, demoPasswordHash } from './password';
-import { buildSeed, SEED_USERS } from './seed-data';
+import { buildSeed, orgOnly, SEED_USERS } from './seed-data';
+import { homeMetrics, monthDelta } from './home-metrics';
 import { initials, yen } from './format';
 import { resetAllowed } from './seed-guard';
 import { placeEvents } from './calendar-layout';
@@ -105,6 +106,28 @@ describe('password and seed shape', () => {
     expect(seed.events.find((e) => e.title === '全社キックオフ')?.date).toBe('2026-12-01');
     expect(seed.approvals.find((a) => a.id === 'ap-camera')?.steps.map((s) => s.approverId)).toEqual(['saito', 'chima']);
     expect(seed.attendance.some((a) => a.date === '2026-11-23')).toBe(false);
+    const clean = orgOnly(seed);
+    expect(clean.users).toHaveLength(21);
+    expect(clean.channels.every((c) => c.kind === 'channel')).toBe(true);
+    expect(clean.channels.some((c) => c.id === 'general')).toBe(true);
+    expect(clean.messages).toEqual([]);
+    expect(clean.tasks).toEqual([]);
+    expect(clean.approvals).toEqual([]);
+    expect(clean.okrs).toEqual([]);
+    expect(clean.attendance).toEqual([]);
+    expect(monthDelta(0, 0)).toBe('0');
+    const metrics = homeMetrics([
+      { status: '公開', publish: '2026-11-23', views: 1200 },
+      { status: '企画', publish: '2026-11-22', views: 0 },
+    ], '2026-11-23');
+    expect(metrics.videos).toBe(1);
+    expect(metrics.viewsLabel).toBe('1,200');
+    expect(metrics.weekly[6]).toBe(1);
+    expect(metrics.followersLabel).toBe('0');
+    expect(metrics.engageLabel).toBe('0%');
+    expect(homeMetrics([], '2026-11-23').videos).toBe(0);
+    expect(homeMetrics([], '2026-11-23').viewsLabel).toBe('0');
+    expect(homeMetrics([], '2026-11-23').weekly.every((n) => n === 0)).toBe(true);
     expect(initials('佐藤 陽菜')).toBe('佐');
     expect(initials('ちま')).toBe('ちま');
     expect(yen(680000)).toBe('¥680,000');

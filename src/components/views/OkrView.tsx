@@ -30,9 +30,9 @@ export function OkrView() {
         <div className="row" style={{ gap: 22, flexWrap: 'wrap' }}>
           <Ring pct={avg} size={110} />
           <div>
-            <div className="eyebrow">FY2026 H2 ・ 全社OKR</div>
-            <h2>AI×動画で、埼玉からSNSの常識を変える</h2>
-            <p>Objective {rows.length}件 ・ Key Results {rows.reduce((s, o) => s + o.krs.length, 0)}件 ・ 平均達成率 {Math.round(avg)}%</p>
+            <div className="eyebrow">全社OKR</div>
+            <h2>{rows.length ? '今期の目標' : 'まだ目標はありません'}</h2>
+            <p>{rows.length ? `Objective ${rows.length}件 ・ Key Results ${rows.reduce((s, o) => s + o.krs.length, 0)}件 ・ 平均達成率 ${Math.round(avg)}%` : '右のボタンから Objective を追加できます。'}</p>
           </div>
           <button className="btn primary" style={{ marginLeft: 'auto' }} type="button" onClick={() => setCreating(true)}><Icon name="plus" /> 目標を追加</button>
         </div>

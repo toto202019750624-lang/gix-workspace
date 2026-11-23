@@ -51,7 +51,15 @@ export function MeetingsView() {
     toast('AI議事録ドラフトを作成しました');
   }
 
-  if (!cur) return <div className="empty">会議がありません</div>;
+  if (!cur) {
+    return (
+      <>
+        <button className="btn primary" type="button" onClick={() => setCreating(true)}><Icon name="plus" /> 会議を作成</button>
+        <div className="empty">会議はまだありません</div>
+        {creating ? <NewMeeting members={members} meId={me.id} onClose={() => setCreating(false)} onCreate={async (m) => { const row = await api<Meeting>('/api/meetings', { method: 'POST', body: JSON.stringify(m) }); setCreating(false); setId(row.id); toast('会議を作成しました'); load(); }} /> : null}
+      </>
+    );
+  }
   return (
     <>
       <div className="grid" style={{ gridTemplateColumns: '340px 1fr' }}>

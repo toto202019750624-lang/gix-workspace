@@ -426,3 +426,24 @@ export function buildSeed(today: string) {
     attendance,
   };
 }
+
+/** Fresh operations: company, people, departments, and team channels only. */
+export function orgOnly<T extends ReturnType<typeof buildSeed>>(data: T): T {
+  return {
+    ...data,
+    channels: data.channels.filter((c) => c.kind === 'channel'),
+    messages: [],
+    readOverrides: [],
+    events: [],
+    tasks: [],
+    folders: [],
+    docs: [],
+    base: [],
+    approvals: [],
+    meetings: [],
+    okrs: [],
+    notifications: [],
+    announcements: [],
+    attendance: [],
+  };
+}

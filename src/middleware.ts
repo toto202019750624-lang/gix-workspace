@@ -9,6 +9,7 @@ const PUBLIC = new Set([
   '/api/cron/ai-employees',
   '/api/agent/context',
   '/api/agent/actions',
+  '/api/agent/reset-business-data',
 ]);
 
 export function middleware(req: NextRequest) {

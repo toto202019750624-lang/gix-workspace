@@ -88,9 +88,8 @@ export async function answerQuestion(userId: string, q: string, channelId?: stri
     return [
       '## KPI分析',
       `- パイプライン上の公開動画は **${published}本**、登録再生数の合計は **${views.toLocaleString('ja-JP')}**`,
-      top ? `- 牽引は「${top.title}」（${top.views.toLocaleString('ja-JP')}回）` : '- 公開動画はまだありません',
-      '- 総再生の物語上の前週比は **+34%**。保存率が高いのは **ハウツー系**',
-      '- フォロワーは31.2万人。OKR（50万人）には月 **+3.1万人** ペースが目安',
+      top && top.views > 0 ? `- 最多は「${top.title}」（${top.views.toLocaleString('ja-JP')}回）` : '- 再生数の付いた動画はまだありません',
+      '- フォロワー数とエンゲージ率は、まだ記録がありません',
     ].join('\n');
   }
 
