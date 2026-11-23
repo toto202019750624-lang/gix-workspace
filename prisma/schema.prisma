@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String @id @default("gix")
+  name        String
+  founded     String
+  hq          String
+  capitalYen  Int
+  seedVersion Int    @default(1)
+}
+
+model Department {
+  id    String @id
+  name  String
+  color String
+  sort  Int
+  users User[]
+}
+
+model User {
+  id               String   @id
+  email            String   @unique
+  passwordHash     String
+  name             String
+  deptId           String
+  dept             Department @relation(fields: [deptId], references: [id])
+  role             String
+  title            String
+  skills           String   @default("[]")
+  bio              String   @default("")
+  ext              String   @default("")
+  status           String   @default("online")
+  grad             String?
+  isBot            Boolean  @default(false)
+  theme            String   @default("light")
+  sidebarCollapsed Boolean  @default(false)
+
+  sessions         Session[]
+  messages         Message[]
+  reactions        Reaction[]
+  attachments      Attachment[]
+  tasksAssigned    Task[]          @relation("Assignee")
+  tasksCreated     Task[]          @relation("Creator")
+  eventAttendees   EventAttendee[]
+  approvalsFiled   Approval[]      @relation("Requester")
+  approvalSteps    ApprovalStep[]
+  meetingAttendees MeetingAttendee[]
+  attendances      Attendance[]
+  okrs             Okr[]
+  notifications    Notification[]
+  announcements    Announcement[]
+  baseRows         BaseRow[]
+  channelMembers   ChannelMember[]
+  channelReads     ChannelRead[]
+  docsTouched      Doc[]           @relation("DocEditor")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Channel {
+  id        String   @id
+  name      String
+  kind      String
+  desc      String   @default("")
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  messages  Message[]
+  members   ChannelMember[]
+  reads     ChannelRead[]
+}
+
+model ChannelMember {
+  channelId String
+  userId    String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+}
+
+model ChannelRead {
+  channelId  String
+  userId     String
+  lastReadAt DateTime
+  channel    Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+}
+
+model Message {
+  id          String   @id
+  channelId   String
+  channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  text        String   @default("")
+  parentId    String?
+  parent      Message? @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies     Message[] @relation("Thread")
+  createdAt   DateTime
+  reactions   Reaction[]
+  attachments Attachment[]
+
+  @@index([channelId, createdAt])
+}
+
+model Reaction {
+  messageId String
+  userId    String
+  emoji     String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId, emoji])
+}
+
+model Attachment {
+  id        String   @id
+  filename  String
+  mime      String
+  size      Int
+  path      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  messageId String?
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  docId     String?
+  doc       Doc?     @relation(fields: [docId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+}
+
+model CalendarEvent {
+  id          String   @id
+  title       String
+  date        String
+  start       String
+  end         String
+  color       String
+  place       String   @default("")
+  desc        String   @default("")
+  createdById String
+  attendees   EventAttendee[]
+}
+
+model EventAttendee {
+  eventId String
+  userId  String
+  event   CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, userId])
+}
+
+model Task {
+  id         String    @id
+  title      String
+  status     String
+  assigneeId String
+  assignee   User      @relation("Assignee", fields: [assigneeId], references: [id])
+  creatorId  String
+  creator    User      @relation("Creator", fields: [creatorId], references: [id])
+  start      String
+  due        String
+  priority   String
+  tag        String
+  sort       Int       @default(0)
+  subtasks   Subtask[]
+}
+
+model Subtask {
+  id     String  @id @default(cuid())
+  taskId String
+  task   Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title  String
+  done   Boolean @default(false)
+  sort   Int     @default(0)
+}
+
+model Folder {
+  id    String  @id
+  name  String
+  open  Boolean @default(true)
+  sort  Int     @default(0)
+  docs  Doc[]
+}
+
+model Doc {
+  id         String       @id
+  folderId   String
+  folder     Folder       @relation(fields: [folderId], references: [id])
+  title      String
+  body       String
+  updatedBy  String
+  editor     User         @relation("DocEditor", fields: [updatedBy], references: [id])
+  updatedOn  String
+  attachments Attachment[]
+}
+
+model BaseRow {
+  id       String @id
+  title    String
+  platform String
+  status   String
+  ownerId  String
+  owner    User   @relation(fields: [ownerId], references: [id])
+  publish  String
+  tag      String @default("")
+  views    Int    @default(0)
+  sort     Int    @default(0)
+}
+
+model Approval {
+  id          String         @id
+  type        String
+  title       String
+  amount      Int            @default(0)
+  requesterId String
+  requester   User           @relation("Requester", fields: [requesterId], references: [id])
+  date        String
+  status      String
+  note        String         @default("")
+  createdAt   DateTime       @default(now())
+  steps       ApprovalStep[]
+}
+
+model ApprovalStep {
+  id         String    @id @default(cuid())
+  approvalId String
+  approval   Approval  @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  approverId String
+  approver   User      @relation(fields: [approverId], references: [id])
+  position   Int
+  status     String
+  comment    String    @default("")
+  decidedAt  DateTime?
+
+  @@index([approverId, status])
+}
+
+model Meeting {
+  id        String            @id
+  title     String
+  date      String
+  time      String
+  status    String
+  minutes   String            @default("")
+  attendees MeetingAttendee[]
+}
+
+model MeetingAttendee {
+  meetingId String
+  userId    String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, userId])
+}
+
+model Attendance {
+  id       String  @id @default(cuid())
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date     String
+  inTime   String
+  outTime  String?
+  breakMin Int     @default(60)
+
+  @@unique([userId, date])
+}
+
+model Okr {
+  id        String      @id
+  ownerId   String
+  owner     User        @relation(fields: [ownerId], references: [id])
+  objective String
+  krs       KeyResult[]
+}
+
+model KeyResult {
+  id      String  @id @default(cuid())
+  okrId   String
+  okr     Okr     @relation(fields: [okrId], references: [id], onDelete: Cascade)
+  title   String
+  current Float
+  target  Float
+  inverse Boolean @default(false)
+  sort    Int     @default(0)
+}
+
+model Notification {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  icon      String
+  text      String
+  read      Boolean  @default(false)
+  go        String   @default("")
+  createdAt DateTime
+
+  @@index([userId, createdAt])
+}
+
+model Announcement {
+  id        String  @id
+  title     String
+  body      String
+  authorId  String
+  author    User    @relation(fields: [authorId], references: [id])
+  date      String
+  pin       Boolean @default(false)
+  tag       String
+  createdAt DateTime @default(now())
+}
