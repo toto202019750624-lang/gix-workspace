@@ -2,9 +2,15 @@ import { execSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { beforeAll, expect, test } from 'vitest';
 
-process.env.DATABASE_URL = 'file:/tmp/gix-vitest.db';
+const dbUrl = process.env.CI && process.env.DATABASE_URL?.startsWith('postgres')
+  ? process.env.DATABASE_URL
+  : 'postgresql://gix:gix@127.0.0.1:5432/gix_test';
+process.env.DATABASE_URL = dbUrl;
+process.env.DIRECT_URL = dbUrl;
 process.env.AUTH_SECRET = 'test-secret';
 process.env.UPLOAD_DIR = '/tmp/gix-vitest-uploads';
+process.env.STORAGE_DRIVER = 'local';
+process.env.REALTIME_MODE = 'poll';
 
 type Handler = (req: Request, parts?: string[]) => Promise<Response>;
 let handleApi: Handler;
@@ -25,10 +31,9 @@ function call(method: string, path: string, opts: { token?: string; json?: unkno
 }
 
 beforeAll(async () => {
-  rmSync('/tmp/gix-vitest.db', { force: true });
   rmSync('/tmp/gix-vitest-uploads', { recursive: true, force: true });
   mkdirSync('/tmp/gix-vitest-uploads', { recursive: true });
-  execSync('npx prisma db push --skip-generate --accept-data-loss', {
+  execSync('npx prisma migrate deploy', {
     stdio: 'pipe',
     env: process.env,
   });
@@ -125,6 +130,14 @@ test('multi-step approval, messenger, mentions, and attachments', async () => {
   const file = await call('GET', `/api/files/${uploaded.id}`, { token: chima.token });
   expect(file.status).toBe(200);
   expect(await file.text()).toBe('gix-memo');
+
+  const sync = await (await call('GET', '/api/sync?since=2020-01-01T00:00:00.000Z', { token: chima.token })).json();
+  expect(sync.events.some((e: { type: string }) => e.type === 'message')).toBe(true);
+  const ai = await call('POST', '/api/ai', { token: chima.token, json: { q: '今日の優先事項' } });
+  expect(ai.headers.get('content-type') || '').toContain('text/event-stream');
+  const body = await ai.text();
+  expect(body).toContain('優先');
+  expect(body).toContain('"source":"canned"');
 });
 
 test('bot replies in a direct message and attendance is per user', async () => {

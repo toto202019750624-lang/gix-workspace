@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Company {
@@ -325,4 +326,15 @@ model Announcement {
   pin       Boolean @default(false)
   tag       String
   createdAt DateTime @default(now())
+}
+
+/// Cross-instance realtime cursor. Clients poll this; SSE is only a same-process fast path.
+model RealtimeEvent {
+  id        String   @id
+  type      String
+  channelId String   @default("")
+  userId    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }

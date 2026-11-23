@@ -30,6 +30,7 @@ export type Bootstrap = {
   notifications: Note[];
   counts: { messages: number; approvals: number; tasks: number };
   clockedIn: { inTime: string } | null;
+  realtime?: 'sse' | 'poll';
 };
 
 export type Task = {

@@ -72,15 +72,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!boot) return;
+    const mode = boot.realtime || 'sse';
     let es: EventSource | null = null;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
+    let since = '';
     const connect = () => {
       es = new EventSource('/api/stream');
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
-          if (data.type !== 'hello') {
+          if (data.mode === 'poll') { es?.close(); return; }
+          if (data.type && data.type !== 'hello') {
             window.dispatchEvent(new CustomEvent('gix-rt', { detail: data }));
             refresh().catch(() => undefined);
           }
@@ -88,21 +91,29 @@ export function Shell({ children }: { children: React.ReactNode }) {
       };
       es.onerror = () => {
         es?.close();
-        if (!stopped) timer = setTimeout(connect, 3000);
+        if (!stopped && mode === 'sse') timer = setTimeout(connect, 3000);
       };
     };
-    connect();
-    const poll = setInterval(() => {
-      refresh().catch(() => undefined);
-      window.dispatchEvent(new CustomEvent('gix-rt', { detail: { type: 'poll' } }));
-    }, 8000);
+    if (mode === 'sse') connect();
+    const poll = setInterval(async () => {
+      try {
+        const sync = await api<{ now: string; events: { type: string; channelId?: string; userId?: string }[] }>(`/api/sync${since ? `?since=${encodeURIComponent(since)}` : ''}`);
+        since = sync.now;
+        if (sync.events.length) {
+          refresh().catch(() => undefined);
+          for (const ev of sync.events) window.dispatchEvent(new CustomEvent('gix-rt', { detail: ev }));
+        } else {
+          window.dispatchEvent(new CustomEvent('gix-rt', { detail: { type: 'poll' } }));
+        }
+      } catch { /* ignore */ }
+    }, mode === 'poll' ? 2500 : 8000);
     const stop = () => { stopped = true; es?.close(); clearInterval(poll); clearTimeout(timer); };
     window.addEventListener('gix-stop', stop);
     return () => {
       stop();
       window.removeEventListener('gix-stop', stop);
     };
-  }, [boot?.me.id, refresh]);
+  }, [boot?.me.id, boot?.realtime, refresh]);
 
   const toast = useCallback((t: string) => {
     setToasts((s) => [...s, t]);
@@ -114,13 +125,38 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const askAI = useCallback(async (q: string, channelId?: string) => {
     setAiOpen(true);
     setNotifOpen(false);
-    setAiLog((l) => [...l, { who: 'me', t: q }]);
+    setAiLog((l) => [...l, { who: 'me', t: q }, { who: 'bot', t: '' }]);
     setTyping(true);
+    const write = (text: string) => setAiLog((l) => {
+      const copy = l.slice();
+      const last = copy[copy.length - 1];
+      if (last?.who === 'bot') copy[copy.length - 1] = { who: 'bot', t: text };
+      return copy;
+    });
     try {
-      const res = await api<{ markdown: string }>('/api/ai', { method: 'POST', body: JSON.stringify({ q, channelId }) });
-      setAiLog((l) => [...l, { who: 'bot', t: res.markdown }]);
+      const res = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q, channelId }) });
+      if (res.status === 401) { location.href = '/login'; return; }
+      if (!res.ok || !res.body) throw new Error('ai');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let acc = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.split('\n').find((row) => row.startsWith('data:'));
+          if (!line) continue;
+          const payload = JSON.parse(line.slice(5).trim()) as { delta?: string };
+          if (payload.delta) { acc += payload.delta; write(acc); }
+        }
+      }
+      if (!acc) write('応答が空でした。');
     } catch {
-      setAiLog((l) => [...l, { who: 'bot', t: '応答に失敗しました。もう一度お試しください。' }]);
+      write('応答に失敗しました。もう一度お試しください。');
     } finally {
       setTyping(false);
     }

@@ -1,15 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { db } from '../lib/prisma';
 import { verifyPassword } from '../lib/password';
 import { ROLE_LABEL } from '../lib/format';
 import { applyDecision, canSeeApproval, currentApproverId } from '../lib/approvals';
 import { extractMentions } from '../lib/mentions';
 import { hmNow, hmToMinutes, todayYMD } from '../lib/dates';
-import { bus, publish } from './bus';
-import { answerQuestion } from './ai';
+import { bus, publish, realtimeMode } from './bus';
+import { answerQuestion, buildAiContext } from './ai';
 import { seedDatabase } from '../lib/seed-run';
+import { llmConfig, streamChat, AI_SYSTEM } from './llm';
+import { deleteObject, getObject, putObject } from './storage';
 
 type DeptUser = NonNullable<Awaited<ReturnType<typeof loadUser>>>;
 
@@ -48,9 +48,6 @@ function match(parts: string[], pattern: string) {
 }
 function str(v: unknown, max = 500) {
   return String(v ?? '').slice(0, max);
-}
-function uploadRoot() {
-  return path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads'));
 }
 
 async function loadUser(id: string) {
@@ -317,8 +314,9 @@ async function logout(req: Request) {
 
 async function route(req: Request, method: string, parts: string[], url: URL, user: DeptUser) {
   const path = parts.join('/');
-  if (method === 'GET' && path === 'bootstrap') return bootstrap(user);
-  if (method === 'GET' && path === 'stream') return stream(user);
+    if (method === 'GET' && path === 'bootstrap') return bootstrap(user);
+    if (method === 'GET' && path === 'sync') return syncSince(user, url);
+    if (method === 'GET' && path === 'stream') return stream(user);
   if (method === 'PATCH' && path === 'me') return patchMe(req, user);
   if (method === 'GET' && path === 'search') return search(user, url.searchParams.get('q') || '');
   if (method === 'POST' && path === 'ai') return ai(req, user);
@@ -404,7 +402,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   if (doc && method === 'PATCH') return saveDoc(req, user, doc.id);
   if (doc && method === 'DELETE') {
     const atts = await db().attachment.findMany({ where: { docId: doc.id } });
-    for (const a of atts) await unlink(a.path).catch(() => undefined);
+    for (const a of atts) await deleteObject(a.path);
     await db().attachment.deleteMany({ where: { docId: doc.id } });
     await db().doc.delete({ where: { id: doc.id } }).catch(() => null);
     return json({ ok: true });
@@ -489,10 +487,34 @@ async function bootstrap(user: DeptUser) {
     notifications: notifications.map(mapNote),
     counts: { messages: counts.messages, approvals: counts.approvals, tasks: counts.tasks },
     clockedIn: todayRow && !todayRow.outTime ? { inTime: todayRow.inTime } : null,
+    realtime: realtimeMode(),
   });
 }
 
+async function syncSince(user: DeptUser, url: URL) {
+  const sinceRaw = url.searchParams.get('since');
+  const now = new Date().toISOString();
+  if (!sinceRaw) return json({ now, mode: realtimeMode(), events: [] });
+  const since = new Date(sinceRaw);
+  if (Number.isNaN(since.getTime())) return json({ now, mode: realtimeMode(), events: [] });
+  const rows = await db().realtimeEvent.findMany({
+    where: { createdAt: { gt: since } },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  });
+  const events = rows
+    .filter((row) => row.type !== 'notification' || !row.userId || row.userId === user.id)
+    .map((row) => ({
+      type: row.type,
+      channelId: row.channelId || undefined,
+      userId: row.userId || undefined,
+      at: row.createdAt.toISOString(),
+    }));
+  return json({ now, mode: realtimeMode(), events });
+}
+
 function stream(user: DeptUser) {
+  if (realtimeMode() === 'poll') return json({ mode: 'poll' });
   const encoder = new TextEncoder();
   let cleanup = () => {};
   const body = new ReadableStream({
@@ -564,13 +586,57 @@ async function ai(req: Request, user: DeptUser) {
   const body = await readBody(req);
   const q = str(body.q, 2000).trim();
   if (!q) return err('質問を入力してください');
-  const markdown = await answerQuestion(user.id, q, body.channelId ? str(body.channelId, 80) : undefined);
-  return json({ markdown });
+  const channelId = body.channelId ? str(body.channelId, 80) : undefined;
+  const encoder = new TextEncoder();
+  const bodyStream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+      const canned = async () => {
+        const markdown = await answerQuestion(user.id, q, channelId);
+        send({ delta: markdown });
+        send({ done: true, source: 'canned' });
+      };
+      try {
+        const cfg = llmConfig();
+        if (!cfg) {
+          await canned();
+        } else {
+          const context = await buildAiContext(user.id, q, channelId);
+          let any = false;
+          for await (const delta of streamChat(cfg, `${AI_SYSTEM}\n\n${context}`, q)) {
+            any = true;
+            send({ delta });
+          }
+          if (!any) await canned();
+          else send({ done: true, source: 'llm' });
+        }
+      } catch (error) {
+        console.error('ai failed', error);
+        send({ delta: '\n\n> モデルへの接続に失敗したため、社内データだけの下書きに切り替えました。\n\n' });
+        await canned().catch(() => send({ delta: '応答に失敗しました。' }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(bodyStream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
 
 async function reset(user: DeptUser) {
   if (user.role !== 'ceo') return err('データ初期化は社長のみ実行できます', 403);
-  await seedDatabase({ reset: true });
+  try {
+    await seedDatabase({ reset: true });
+  } catch (error) {
+    return err(error instanceof Error ? error.message : '初期化できません', 403);
+  }
   return json({ ok: true });
 }
 
@@ -580,12 +646,10 @@ async function upload(req: Request, user: DeptUser) {
   if (!(file instanceof File)) return err('ファイルがありません');
   if (file.size > 8 * 1024 * 1024) return err('8MBまでのファイルを添付できます');
   const id = randomUUID();
-  const root = uploadRoot();
-  await mkdir(root, { recursive: true });
-  const storage = path.join(root, id);
-  await writeFile(storage, Buffer.from(await file.arrayBuffer()));
+  const mime = file.type || 'application/octet-stream';
+  const key = await putObject(id, Buffer.from(await file.arrayBuffer()), mime);
   const row = await db().attachment.create({
-    data: { id, filename: file.name.slice(0, 180) || 'file', mime: file.type || 'application/octet-stream', size: file.size, path: storage, userId: user.id },
+    data: { id, filename: file.name.slice(0, 180) || 'file', mime, size: file.size, path: key, userId: user.id },
   });
   return json(mapAtt(row));
 }
@@ -593,16 +657,13 @@ async function upload(req: Request, user: DeptUser) {
 async function download(id: string, _user: DeptUser) {
   const att = await db().attachment.findUnique({ where: { id } });
   if (!att) return err('ファイルがありません', 404);
-  const root = uploadRoot();
-  const resolved = path.resolve(att.path);
-  if (!resolved.startsWith(root + path.sep)) return err('forbidden', 403);
-  const buf = await readFile(resolved).catch(() => null);
-  if (!buf) return err('ファイルがありません', 404);
+  const stored = await getObject(att.path);
+  if (!stored) return err('ファイルがありません', 404);
   const disp = att.mime.startsWith('image/') ? 'inline' : 'attachment';
-  return new Response(buf, {
+  return new Response(new Uint8Array(stored.body), {
     headers: {
       'Content-Type': att.mime,
-      'Content-Length': String(buf.length),
+      'Content-Length': String(stored.body.length),
       'Content-Disposition': `${disp}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       'Cache-Control': 'private, max-age=3600',
     },

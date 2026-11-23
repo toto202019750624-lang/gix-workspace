@@ -7,10 +7,27 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gix
+          POSTGRES_PASSWORD: gix
+          POSTGRES_DB: gix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gix -d gix_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
-      DATABASE_URL: file:./ci.db
+      DATABASE_URL: postgresql://gix:gix@localhost:5432/gix_test
+      DIRECT_URL: postgresql://gix:gix@localhost:5432/gix_test
       AUTH_SECRET: ci-secret
+      STORAGE_DRIVER: local
       UPLOAD_DIR: ./data/uploads
+      REALTIME_MODE: poll
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,6 +35,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx prisma generate
+      - run: npx prisma migrate deploy
       - run: npm test
       - run: npm run build

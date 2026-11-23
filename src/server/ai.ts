@@ -94,5 +94,43 @@ export async function answerQuestion(userId: string, q: string, channelId?: stri
     ].join('\n');
   }
 
-  return `「${q}」について承知しました。\n※ このアシスタントは社内データに基づくデモ応答です。「要約」「企画」「優先事項」「承認」「KPI」などのキーワードに反応します。外部の大規模言語モデルには接続していません。`;
+  return `「${q}」について承知しました。\n※ このアシスタントは社内データに基づくデモ応答です。「要約」「企画」「優先事項」「承認」「KPI」などのキーワードに反応します。APIキーを設定すると、同じ社内データをもとにモデルが答えます。`;
+}
+
+/** Compact company context handed to the LLM. Facts only, no invented numbers. */
+export async function buildAiContext(userId: string, q: string, channelId?: string) {
+  const user = await db().user.findUnique({ where: { id: userId }, include: { dept: true } });
+  if (!user) return 'ユーザー不明';
+  const today = todayYMD();
+  const [events, tasks, steps, rows] = await Promise.all([
+    db().calendarEvent.findMany({ where: { date: today }, include: { attendees: true }, orderBy: { start: 'asc' } }),
+    db().task.findMany({ where: { assigneeId: userId, status: { not: 'done' } }, orderBy: { due: 'asc' }, take: 8 }),
+    db().approvalStep.findMany({ where: { approverId: userId, status: 'pending' }, include: { approval: { include: { requester: true } } }, take: 8 }),
+    db().baseRow.findMany(),
+  ]);
+  const mineEvents = user.role === 'ceo' || user.role === 'vp' ? events : events.filter((e) => e.attendees.some((a) => a.userId === userId));
+  const views = rows.reduce((sum, row) => sum + row.views, 0);
+  const top = rows.slice().sort((a, b) => b.views - a.views)[0];
+  let channelBlock = '';
+  if (channelId || /要約/.test(q)) {
+    const channels = await db().channel.findMany();
+    const chId = channelId || channels.find((c) => q.includes(c.name))?.id || 'general';
+    const member = await db().channelMember.findUnique({ where: { channelId_userId: { channelId: chId, userId } } });
+    if (member) {
+      const msgs = await db().message.findMany({ where: { channelId: chId, parentId: null }, orderBy: { createdAt: 'desc' }, take: 8, include: { user: true } });
+      const channel = channels.find((c) => c.id === chId);
+      channelBlock = `\nチャンネル ${channel?.name || chId} の直近:\n${msgs.reverse().map((m) => `- ${m.user.name}: ${m.text.replace(/\n/g, ' ').slice(0, 80)}`).join('\n')}`;
+    }
+  }
+  return [
+    `ユーザー: ${greetName(user)}（${user.title} / ${user.dept?.name || ''}）`,
+    `今日 ${today} の予定:`,
+    ...(mineEvents.length ? mineEvents.map((e) => `- ${e.start}-${e.end} ${e.title} ${e.place}`) : ['- なし']),
+    '自分の未完了タスク:',
+    ...(tasks.length ? tasks.map((t) => `- ${t.title} 期限${fmtMD(t.due)} 優先度${t.priority} ${t.status}`) : ['- なし']),
+    '自分の承認待ち:',
+    ...(steps.length ? steps.map((s) => `- ${s.approval.title}（${s.approval.type}・${s.approval.requester.name}${s.approval.amount ? ' ' + yen(s.approval.amount) : ''}）`) : ['- なし']),
+    `パイプライン: 公開${rows.filter((r) => r.status === '公開').length}本 / 再生合計${views.toLocaleString('ja-JP')}${top ? ` / 最多「${top.title}」${top.views.toLocaleString('ja-JP')}` : ''}`,
+    channelBlock,
+  ].join('\n');
 }

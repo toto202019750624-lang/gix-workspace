@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './prisma';
 import { demoPasswordHash } from './password';
-import { SEED_USERS, SEED_VERSION, buildSeed } from './seed-data';
+import { buildSeed } from './seed-data';
 import { todayYMD } from './dates';
+import { resetAllowed } from './seed-guard';
 
 async function wipe() {
   const prisma = db();
+  await prisma.realtimeEvent.deleteMany();
   await prisma.reaction.deleteMany();
   await prisma.attachment.deleteMany();
   await prisma.message.updateMany({ data: { parentId: null } });
@@ -37,9 +39,12 @@ async function wipe() {
 
 export async function seedDatabase(opts: { reset?: boolean; today?: string } = {}) {
   const prisma = db();
+  if (opts.reset && !resetAllowed()) {
+    throw new Error('本番環境では ALLOW_SEED_RESET=true を明示しない限りデータを初期化できません');
+  }
   const existing = await prisma.company.findUnique({ where: { id: 'gix' } }).catch(() => null);
   const userCount = await prisma.user.count().catch(() => 0);
-  if (existing && existing.seedVersion === SEED_VERSION && !opts.reset && userCount >= SEED_USERS.length) {
+  if (!opts.reset && (existing || userCount > 0)) {
     return { skipped: true as const };
   }
   if (existing || userCount) await wipe();
