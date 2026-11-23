@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "prisma generate && next build",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
     "start": "tsx scripts/start.ts",
     "test": "vitest run",
     "db:migrate": "prisma migrate deploy",
@@ -23,14 +23,14 @@
     "@vercel/blob": "^2.9.0",
     "next": "^15.5.6",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "tsx": "^4.20.6"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "prisma": "^6.19.0",
-    "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
