@@ -20,7 +20,7 @@ body.dark{
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
-body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.55;overflow:hidden;-webkit-font-smoothing:antialiased;letter-spacing:.01em;transition:background .2s,color .2s}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.55;overflow:hidden;-webkit-font-smoothing:antialiased;letter-spacing:.01em;transition:background .2s,color .2s;line-break:strict}
 button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
 a{color:var(--accent)}
 svg{width:18px;height:18px;flex-shrink:0}
@@ -277,7 +277,9 @@ button.chip{line-height:1.4}
   .g4,.g3,.g2{grid-template-columns:1fr}.span2{grid-column:auto}
   .search-trigger{min-width:0}.search-trigger span,.search-trigger kbd{display:none}
   .content{padding:16px}.topbar{padding:0 14px}
-  .msgr,.msgr.thread-open{grid-template-columns:1fr}.ch-list{display:none}.msgr.show-ch .ch-list{display:block}.msgr.show-ch .chat{display:none}
+  .msgr,.msgr.thread-open{grid-template-columns:1fr;height:calc(100dvh - 96px)}.ch-list{display:none}.msgr.show-ch .ch-list{display:block}.msgr.show-ch .chat{display:none}
+  .msgr.thread-open .thread-pane{width:100%}
+  .hero h2,.list-item,.ev,.wk-ev{word-break:keep-all;overflow-wrap:anywhere}
   .docs{grid-template-columns:1fr;height:auto}.editor{grid-template-columns:1fr;min-height:400px}
   .topbar h1{font-size:15px}
   .grid[style*="grid-template-columns"]{grid-template-columns:1fr!important}

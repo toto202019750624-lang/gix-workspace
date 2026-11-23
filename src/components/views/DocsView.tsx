@@ -103,7 +103,7 @@ export function DocsView() {
           <button className="icon-btn" title="削除" type="button" onClick={remove}><Icon name="trash" /></button>
         </div>
         <div className="row small muted">
-          <Avatar member={member(doc.updatedBy)} size="sm" /> {member(doc.updatedBy).name} ・ 最終更新 {fmtMD(doc.updatedOn)} ・
+          <Avatar member={member(doc.updatedBy)} size="sm" /> {member(doc.updatedBy).name} ・ 最終更新 {fmtMD(doc.updatedOn)}{doc.viaAi ? <span className="badge">AI</span> : null} ・
           <select className="in" style={{ width: 'auto', padding: '3px 8px' }} value={doc.folderId} onChange={async (e) => { await api('/api/docs/' + doc.id, { method: 'PATCH', body: JSON.stringify({ folderId: e.target.value }) }); load(); }}>
             {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>

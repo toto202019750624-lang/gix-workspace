@@ -6,6 +6,14 @@ import { md } from './markdown';
 import { hashPassword, verifyPassword, DEMO_PASSWORD, demoPasswordHash } from './password';
 import { buildSeed, SEED_USERS } from './seed-data';
 import { initials, yen } from './format';
+import { resetAllowed } from './seed-guard';
+import { placeEvents } from './calendar-layout';
+import { planTemplate, sanitizeAction, shouldAutoTick, workPhase } from './ai-rhythm';
+import { llmConfig, streamChat } from '../server/llm';
+import { deleteObject, getObject, putObject, storageDriver } from '../server/storage';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 describe('dates', () => {
   test('adds days across a month boundary', () => {
@@ -100,5 +108,80 @@ describe('password and seed shape', () => {
     expect(initials('佐藤 陽菜')).toBe('佐');
     expect(initials('ちま')).toBe('ちま');
     expect(yen(680000)).toBe('¥680,000');
+  });
+});
+
+describe('production helpers', () => {
+  test('blocks destructive seed on Vercel and production', () => {
+    expect(resetAllowed({ NODE_ENV: 'development' })).toBe(true);
+    expect(resetAllowed({ NODE_ENV: 'test' })).toBe(true);
+    expect(resetAllowed({ NODE_ENV: 'production' })).toBe(false);
+    expect(resetAllowed({ NODE_ENV: 'production', ALLOW_SEED_RESET: 'true' })).toBe(true);
+    expect(resetAllowed({ NODE_ENV: 'development', VERCEL: '1' })).toBe(false);
+  });
+
+  test('places overlapping events side by side', () => {
+    const placed = placeEvents([
+      { id: 'a', start: 0, end: 60 },
+      { id: 'b', start: 30, end: 90 },
+      { id: 'c', start: 120, end: 150 },
+    ]);
+    const a = placed.find((e) => e.id === 'a')!;
+    const b = placed.find((e) => e.id === 'b')!;
+    const c = placed.find((e) => e.id === 'c')!;
+    expect(a.cols).toBe(2);
+    expect(b.cols).toBe(2);
+    expect(a.col).not.toBe(b.col);
+    expect(c.cols).toBe(1);
+    expect(c.col).toBe(0);
+  });
+
+  test('llm config is empty without a key and parses a stream', async () => {
+    expect(llmConfig({} as unknown as NodeJS.ProcessEnv)).toBeNull();
+    expect(llmConfig({ XAI_API_KEY: 'x' } as unknown as NodeJS.ProcessEnv)?.base).toBe('https://api.x.ai/v1');
+    expect(llmConfig({ OPENAI_API_KEY: 'o', AI_MODEL: 'gpt-4o-mini' } as unknown as NodeJS.ProcessEnv)?.model).toBe('gpt-4o-mini');
+    const payload = [
+      'data: {"choices":[{"delta":{"content":"こん"}}]}',
+      '',
+      'data: {"choices":[{"delta":{"content":"にちは"}}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    const fetchImpl = (async () => new Response(payload, { status: 200 })) as typeof fetch;
+    let text = '';
+    for await (const delta of streamChat({ key: 'k', base: 'https://example.test/v1', model: 'm' }, 'sys', 'user', fetchImpl)) text += delta;
+    expect(text).toBe('こんにちは');
+  });
+
+  test('local storage round trip', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'gix-store-'));
+    process.env.STORAGE_DRIVER = 'local';
+    process.env.UPLOAD_DIR = dir;
+    expect(storageDriver()).toBe('local');
+    const key = await putObject('file1', Buffer.from('hello-gix'), 'text/plain');
+    expect(key).toBe('local:file1');
+    const got = await getObject(key);
+    expect(got?.body.toString()).toBe('hello-gix');
+    await deleteObject(key);
+    expect(await getObject(key)).toBeNull();
+  });
+
+  test('weekday phases and lightweight plans', () => {
+    const mondayMorning = new Date('2026-11-23T00:30:00Z');
+    const mondayNoon = new Date('2026-11-23T03:00:00Z');
+    const mondayEvening = new Date('2026-11-23T08:30:00Z');
+    const sunday = new Date('2026-11-22T03:00:00Z');
+    expect(workPhase(mondayMorning)).toBe('morning');
+    expect(workPhase(mondayNoon)).toBe('day');
+    expect(workPhase(mondayEvening)).toBe('evening');
+    expect(workPhase(sunday)).toBe('off');
+    expect(shouldAutoTick({ enabled: true, lastTickAt: null, now: mondayMorning, minMinutes: 20, phase: 'morning' })).toBe(true);
+    expect(shouldAutoTick({ enabled: false, lastTickAt: null, now: mondayMorning, minMinutes: 20, phase: 'morning' })).toBe(false);
+    const emp = { id: 'sato', name: '佐藤 陽菜', role: 'manager', title: '企画部 部長', deptId: 'plan', skills: ['企画'] };
+    const morning = planTemplate({ emp, phase: 'morning', clockedIn: false, inboxOwner: null, inboxOther: null, colleague: null, task: null, pending: null, meeting: null });
+    expect(morning.some((a) => a.type === 'clock' && a.action === 'in')).toBe(true);
+    expect(sanitizeAction({ type: 'post', channelId: 'plan', text: '了解です' }, emp)?.type).toBe('post');
+    expect(sanitizeAction({ type: 'nope' }, emp)).toBeNull();
   });
 });

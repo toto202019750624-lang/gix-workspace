@@ -1,24 +1,26 @@
 # GIX Workspace
 
-株式会社GIX（埼玉のAI動画プロダクション、架空）の社内グループウェアです。承認済みプロトタイプの白基調・インディゴ `#4452d6`・セリフ数字の見た目を保ったまま、ログイン・共有データベース・リアルタイム更新に対応しています。
+株式会社GIX（埼玉のAI動画プロダクション、架空）の社内グループウェアです。白基調・インディゴ `#4452d6`・セリフ数字の見た目はプロトタイプのままです。
 
-## 起動（この1行）
+## ローカル起動
+
+Postgres が必要です。Docker がある場合はこれだけで足ります。
 
 ```bash
 npm install && npm run dev
 ```
 
-`npm run dev` がデータベースの作成、初期データの投入、開発サーバーの起動まで行います。ブラウザで <http://localhost:3000> を開いてください。
+`npm run dev` は `docker compose up -d`、マイグレーション、初期データの投入（既にあれば何もしない）、開発サーバー起動を順に行います。ブラウザで <http://localhost:3000> を開いてください。
 
-本番と同じビルドで動かす場合:
+Docker が無い場合は、先に Postgres 16 を用意し `.env` の `DATABASE_URL` と `DIRECT_URL` を合わせてから同じコマンドを実行してください。
 
 ```bash
-npm run build && npm start
+docker compose up -d
 ```
 
 ## デモアカウント
 
-パスワードは全員 **`gix2026`** です。ログイン画面のボタンからも入れます。
+パスワードは全員 **`gix2026`** です。
 
 | 名前 | メール | ロール |
 | --- | --- | --- |
@@ -29,36 +31,23 @@ npm run build && npm start
 | 吉田 健太 | yoshida@gix.example | 出向者（Codex） |
 | 加藤 葵 | kato@gix.example | 一般 |
 
-全21名（経営2名 + 社員16名 + Codex出向3名）。部署は企画部3、制作部6、Codex出向3、SNSマーケティング部3、AI・テック部2、管理部2です。
+全21名。設立 2026-11-23、本店 埼玉県、資本金 300万円。
 
-会社情報: 設立 2026-11-23、本店 埼玉県、資本金 300万円。
+`npm run db:seed` はデータが既にあると何もしません。消して入れ直すのは `npm run db:reset` です。本番（`NODE_ENV=production` または Vercel）では `ALLOW_SEED_RESET=true` が無い限りリセットできません。
 
 ## できること
 
-- ホーム（今日の予定、マイタスク、自分の承認待ち、制作KPI、お知らせ、勤怠打刻）
-- メッセンジャー（部署チャンネル、DM、スレッド、リアクション、メンション、検索、ファイル添付）。副社長BotはDMに返答します
-- カレンダー（月 / 週 / 日、参加者つき予定）
-- タスク（カンバンのドラッグ＆ドロップ、リスト、ガント、サブタスク）。「自分」で担当分だけに絞れます
-- ドキュメント（Markdown の編集 / 分割 / プレビュー、フォルダ、ファイル添付）
-- ベース（動画パイプラインのフィルタ、ソート、ステータス別グループ、CSV）
-- 承認（経費 / 稟議 / 休暇）。複数承認者を順に回し、今の承認者だけが承認・却下できます
-- 会議と議事録（テンプレート、AI下書き、デモ通話画面）
-- メンバーと組織図
-- 勤怠（自分の打刻と履歴。社長・副社長・管理部長は他メンバーを参照可能）
-- OKR
-- Ctrl / ⌘ + K のコマンドパレット、通知、AIパネル（Ctrl / ⌘ + J）、ダークモード
-
-データはサーバーのデータベースに保存され、ログインした全員で共有されます。タスクのバッジと「自分」フィルタ、承認の「承認待ち」「自分の申請」、勤怠、通知、DMはユーザーごとに分かれます。
+- ホーム、メッセンジャー（チャンネル、DM、スレッド、リアクション、メンション、検索、添付）
+- カレンダー（重なる予定は横に並べる）、タスク、ドキュメント、ベース、承認（複数承認者）、会議、組織図、勤怠、OKR
+- Ctrl/Cmd+K、通知、AIパネル、ダークモード
+- 担当タスク、承認待ち、勤怠、通知、DMはログインユーザーごと
 
 ## 技術
 
-- Next.js（App Router）+ TypeScript
-- Prisma + SQLite（ローカル既定）
-- セッションは HttpOnly Cookie。パスワードは scrypt
-- メッセンジャーと通知は Server-Sent Events。届かない環境では約8秒のポーリングにフォールバックします
-- 添付ファイルは `UPLOAD_DIR`（既定 `./data/uploads`）
-
-見た目は承認済みプロトタイプのスタイルシートを移植しています。ロゴ以外にグラデーションは使いません。
+- Next.js + TypeScript + Prisma + PostgreSQL
+- リアルタイムは DB の `RealtimeEvent` を短時間ポーリング。単一プロセスでは SSE も併用します。Vercel ではポーリングのみです
+- AI は OpenAI 互換 API。キーが無いときは定型応答
+- 添付は `local` / `s3` / Vercel Blob
 
 ## テスト
 
@@ -66,45 +55,94 @@ npm run build && npm start
 npm test
 ```
 
-日付計算、承認ルート、メンション、Markdownのエスケープ、シードの人数、ログインから承認・メッセージ・添付までのAPIを検証します。
+Postgres が `postgresql://gix:gix@127.0.0.1:5432/gix_test` で起動している必要があります。CI はサービスの Postgres を使います。
 
-## 環境変数
+## オーナーが用意するもの（こちらでは作りません）
 
-`.env.example` を参照してください。`npm run dev` は `.env` が無いときこれをコピーします。
+| もの | 必須 | 用途 |
+| --- | --- | --- |
+| Vercel アカウントとプロジェクト | 本番公開するなら必須 | ホスティング |
+| Postgres（Neon、Supabase、Vercel Postgres のいずれか） | 必須 | `DATABASE_URL` と `DIRECT_URL` |
+| 長いランダム文字列 | 必須 | `AUTH_SECRET` |
+| OpenAI または xAI の API キー | 任意 | 実AI。無ければ定型応答 |
+| Vercel Blob ストア、または S3 / R2 バケット | 任意 | 添付を永続化。無ければデプロイ先のディスク（Vercel では消える） |
 
-| 変数 | 説明 |
-| --- | --- |
-| `DATABASE_URL` | 既定 `file:./dev.db`（prisma ディレクトリ基準） |
-| `AUTH_SECRET` | 本番では必ず変更 |
-| `UPLOAD_DIR` | 添付の保存先 |
-| `PORT` | 既定 3000 |
+### 環境変数
 
-## デプロイ
+必須:
 
-長時間プロセスで動かすのが確実です（Railway、Fly.io、Render、VPS、同梱の Dockerfile）。SSEとローカル添付がそのまま動きます。
+- `DATABASE_URL` — アプリ用。プール接続でも可
+- `DIRECT_URL` — `prisma migrate deploy` 用の直接接続。プールしない URL。ローカルでは `DATABASE_URL` と同じでよい
+- `AUTH_SECRET` — セッション用の秘密。本番では必ず変更
+
+任意:
+
+- `AI_API_KEY` または `OPENAI_API_KEY` または `XAI_API_KEY`
+- `AI_BASE_URL` — 既定 `https://api.openai.com/v1`。xAI だけを置いたときは `https://api.x.ai/v1`
+- `AI_MODEL` — 既定 `gpt-4o-mini`（xAI 既定は `grok-3`）
+- `STORAGE_DRIVER` — `local`（既定） / `blob` / `s3`
+- `BLOB_READ_WRITE_TOKEN` — Vercel Blob
+- `S3_ENDPOINT` `S3_BUCKET` `S3_REGION` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY`
+- `REALTIME_MODE` — `auto`（既定。Vercel では poll） / `poll` / `sse`
+- `UPLOAD_DIR` — local の保存先
+- `ALLOW_SEED_RESET` — `true` のときだけ本番で全消去できる。通常は設定しない
+
+## Vercel へのデプロイ
+
+1. 上記の Postgres を作り、接続文字列を2つ控える（プール用と直接接続用）
+2. Vercel にこのリポジトリをインポートする
+3. 環境変数に少なくとも `DATABASE_URL`、`DIRECT_URL`、`AUTH_SECRET` を Production と Preview の両方へ入れる
+4. 添付を残すなら Blob をリンクして `BLOB_READ_WRITE_TOKEN` を入れ、`STORAGE_DRIVER=blob` にする。または S3 互換の4変数と `STORAGE_DRIVER=s3`
+5. AI社員を無人で出勤させるなら `CRON_SECRET` を入れる。文章を書かせる Grok Bot 用に `AGENT_API_TOKEN` も入れる。チャット欄のAIは任意で、`OPENAI_API_KEY` か `XAI_API_KEY` が無いときは定型応答のままです
+6. デプロイする。`vercel.json` のビルドは `prisma migrate deploy` のあと `next build` です。初回はデータベースが空でもマイグレーションだけが走ります。AI社員は最初からオンです
+7. 初回だけ、手元から初期データを入れる（既存ユーザーがいると何もしません）
 
 ```bash
-docker build -t gix-workspace .
-docker run -p 3000:3000 -v gix-data:/app/prisma -v gix-uploads:/app/data/uploads gix-workspace
+DATABASE_URL="postgres://..." DIRECT_URL="postgres://..." npx tsx prisma/seed.ts
 ```
 
-SQLiteファイルをボリュームに残してください。コンテナを作り直すたびに初期データへ戻したくない場合は、`prisma/dev.db` を永続化します。
+Vercel 上のリアルタイムは約2.5秒のポーリングです。SSE は使いません。
 
-### Vercel + ホストされた Postgres
+## AI社員とエージェント API
 
-サーバーレスでは SQLite ファイルとローカル添付は残りません。次の手順で Postgres に切り替えます。
+AI社員はデプロイ直後からオンです。有料の LLM キーは不要です。
 
-1. Neon や Supabase で Postgres を作り、接続文字列を `DATABASE_URL` に設定する
-2. `npm run db:use-postgres` で `prisma/schema.prisma` の provider を `postgresql` にする
-3. `npx prisma db push && npx tsx prisma/seed.ts`
-4. Vercel に `DATABASE_URL` と `AUTH_SECRET` を設定してデプロイする
+- Vercel Hobby の Cron は1日1回です。`vercel.json` は平日 09:00 JST（UTC 0:00）に `/api/cron/ai-employees` を呼び、その時刻の出勤だけを付けます。退勤は、誰かがアプリを開いたとき（最短 `AI_TICK_MINUTES`、既定20分）か、外部の無料 Cron で同じ URL を叩くと進みます
+- 昼のチャット、タスク、承認、議事録は、外部の Grok Bot が下の API に文章を渡して行います。組み込み Cron は出勤・退勤しかしません
+- 画面の「AI社員」で今日の記録を見られます。オン／オフは社長だけ。手動の「AI社員を動かす」は社長と副社長です
+- 投稿・申請・文書には `AI` バッジが付きます
 
-この構成ではリアルタイムはポーリングになります。添付を残すには S3 や Vercel Blob など、オブジェクトストレージへの置き換えが必要です（未実装）。
+Hobby の1日1回では一日のリズムが足りないので、[cron-job.org](https://cron-job.org) などの無料 Cron で、平日の 9–19時 JST に20分おきへ次を設定できます。
 
-## 既知の差分・制限
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" https://<your-app>.vercel.app/api/cron/ai-employees
+```
 
-- AIアシスタントは社内データに基づく定型応答です。外部の大規模言語モデルには接続していません
-- 会議の「参加する」は通話UIのデモで、WebRTC通信は行いません
-- リアルタイム配信は単一Nodeプロセスのメモリです。複数インスタンスではポーリングが更新を担います
-- ユーザーの自己登録、パスワード再設定メール、監査ログはありません
-- 社長の「データ初期化」は共有データをシード状態に戻します
+状況の取得:
+
+```bash
+curl -s -H "Authorization: Bearer $AGENT_API_TOKEN" \
+  https://<your-app>.vercel.app/api/agent/context
+```
+
+動作の記録（社員になりきった文章は Bot 側で書く）:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $AGENT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  https://<your-app>.vercel.app/api/agent/actions \
+  -d '{"actions":[
+    {"employeeId":"sato","type":"post","channelId":"plan","text":"おはようございます。今日は年末特番の構成を進めます。"},
+    {"employeeId":"sato","type":"task","taskId":"<task-id>","status":"doing","comment":"構成案を先に固めます。"},
+    {"employeeId":"sato","type":"clock","action":"in"}
+  ]}'
+```
+
+`type` は `post`（`parentId` でスレッド返信）、`react`、`task`、`approval`、`decide`、`doc`、`minutes`、`clock` です。`employeeId` に社長（`chima`）は指定できません。
+
+## 既知の制限
+
+- 会議の「参加する」は画面デモで、通話はしません
+- AIキーが無い、または接続に失敗したときは定型の社内データ応答に戻ります
+- ユーザーの自己登録とパスワード再設定メールはありません
+- Vercel のサーバーレスではローカルディスクの添付は残りません。Blob か S3 を設定してください

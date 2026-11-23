@@ -10,7 +10,7 @@ function run(cmd: string, args: string[]) {
   });
 }
 
-await run('npx', ['prisma', 'db', 'push', '--skip-generate']);
+await run('npx', ['prisma', 'migrate', 'deploy']);
 await run('npx', ['tsx', 'prisma/seed.ts']);
 const port = process.env.PORT || '3000';
 const next = spawn('npx', ['next', 'start', '-p', port], { stdio: 'inherit' });

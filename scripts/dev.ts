@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync } from 'node:fs';
 
 if (!existsSync('.env')) copyFileSync('.env.example', '.env');
@@ -10,8 +10,13 @@ function run(cmd: string, args: string[]) {
   });
 }
 
+const docker = spawnSync('docker', ['compose', 'up', '-d'], { stdio: 'inherit' });
+if (docker.error || docker.status) {
+  console.warn('docker compose を起動できませんでした。DATABASE_URL の Postgres が起動済みであることを確認してください。');
+}
+
 await run('npx', ['prisma', 'generate']);
-await run('npx', ['prisma', 'db', 'push', '--skip-generate']);
+await run('npx', ['prisma', 'migrate', 'deploy']);
 await run('npx', ['tsx', 'prisma/seed.ts']);
 
 const port = process.env.PORT || '3000';

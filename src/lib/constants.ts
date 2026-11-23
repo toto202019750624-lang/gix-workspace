@@ -12,6 +12,7 @@ export const NAV: { id?: string; name?: string; ic?: string; sep?: string }[] = 
   { id: 'members', name: 'メンバー・組織図', ic: 'users' },
   { id: 'attendance', name: '勤怠', ic: 'clock' },
   { id: 'okr', name: 'OKR・目標', ic: 'target' },
+  { id: 'ai-staff', name: 'AI社員', ic: 'spark' },
 ];
 
 export const TASK_COLS = [

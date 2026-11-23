@@ -6,6 +6,8 @@ import { addDaysStr, fmtMD, greet, hmNow, todayYMD } from '@/lib/dates';
 import { greetName, yen } from '@/lib/format';
 import { api } from '@/lib/http';
 import type { Announcement, Approval, BaseRow, CalEvent, Task } from '@/lib/types';
+
+type AiRow = { id: string; userId: string; kind: string; summary: string; ts: string };
 import { Icon } from '../icons';
 import { useGix } from '../Shell';
 import { Avatar, Field, Modal, Prio, Spark } from '../ui';
@@ -13,18 +15,19 @@ import { Avatar, Field, Modal, Prio, Spark } from '../ui';
 export function HomeView() {
   const { me, member, openAI, toast, refresh, clock, clockedIn } = useGix();
   const router = useRouter();
-  const [data, setData] = useState<{ ann: Announcement[]; events: CalEvent[]; tasks: Task[]; approvals: Approval[]; base: BaseRow[] } | null>(null);
+  const [data, setData] = useState<{ ann: Announcement[]; events: CalEvent[]; tasks: Task[]; approvals: Approval[]; base: BaseRow[]; ai: AiRow[] } | null>(null);
   const [post, setPost] = useState(false);
   const today = todayYMD();
   const load = useCallback(async () => {
-    const [ann, events, tasks, approvals, base] = await Promise.all([
+    const [ann, events, tasks, approvals, base, ai] = await Promise.all([
       api<Announcement[]>('/api/announcements'),
       api<CalEvent[]>('/api/calendar'),
       api<Task[]>('/api/tasks'),
       api<Approval[]>('/api/approvals?tab=pending'),
       api<BaseRow[]>('/api/base'),
+      api<{ activities: AiRow[] }>('/api/ai-employees'),
     ]);
-    setData({ ann, events, tasks, approvals, base });
+    setData({ ann, events, tasks, approvals, base, ai: ai.activities });
   }, []);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   useEffect(() => {
@@ -75,6 +78,19 @@ export function HomeView() {
         <Kpi label="チャンネル総再生" num={`${(12.4 + views / 1e6).toFixed(1)}M`} delta="+34% 前週比" values={[6, 7.2, 7.8, 8.9, 9.6, 11, 12.1, 12.4 + views / 1e6]} color="#4a90a4" ic="eye" />
         <Kpi label="フォロワー" num="31.2万" delta="+2.4万 今月" values={[18, 20, 22, 23.5, 25, 27, 29.5, 31.2]} color="#c2697f" ic="users" />
         <Kpi label="平均エンゲージ率" num="6.4%" delta="+0.8pt" values={[4.8, 5.1, 5.0, 5.6, 5.9, 6.0, 6.2, 6.4]} color="#5e9c7e" ic="trend" />
+      </div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3><Icon name="spark" /> 今日のAI社員<span className="more" onClick={() => router.push('/ai-staff')}>すべて →</span></h3>
+        {data.ai.length ? data.ai.slice(0, 6).map((row) => (
+          <div className="list-item" key={row.id} onClick={() => router.push('/ai-staff')}>
+            <Avatar member={member(row.userId)} size="sm" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>{row.summary}</div>
+              <div className="small muted">{row.kind} ・ {row.ts.slice(11, 16)}</div>
+            </div>
+            <span className="badge">AI</span>
+          </div>
+        )) : <div className="empty">まだ今日の活動はありません。出社時間（平日 9–19時 JST）に自動で出勤・退勤します。</div>}
       </div>
       <div className="grid g3">
         <div className="card">

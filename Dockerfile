@@ -7,4 +7,4 @@ RUN npm ci
 COPY . .
 ENV PORT=3000
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx prisma/seed.ts && npx next start -p ${PORT:-3000}"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts && npx next start -p ${PORT:-3000}"]

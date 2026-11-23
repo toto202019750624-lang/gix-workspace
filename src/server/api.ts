@@ -1,15 +1,17 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { after } from 'next/server';
 import { db } from '../lib/prisma';
 import { verifyPassword } from '../lib/password';
 import { ROLE_LABEL } from '../lib/format';
 import { applyDecision, canSeeApproval, currentApproverId } from '../lib/approvals';
 import { extractMentions } from '../lib/mentions';
 import { hmNow, hmToMinutes, todayYMD } from '../lib/dates';
-import { bus, publish } from './bus';
-import { answerQuestion } from './ai';
+import { bus, publish, realtimeMode } from './bus';
+import { answerQuestion, buildAiContext } from './ai';
 import { seedDatabase } from '../lib/seed-run';
+import { llmConfig, streamChat, AI_SYSTEM } from './llm';
+import { deleteObject, getObject, putObject } from './storage';
+import { agentAuthorized, agentContext, applyAgentActions, cronAuthorized, runLightweightTick, setAiEnabled, todayActivity } from './agent';
 
 type DeptUser = NonNullable<Awaited<ReturnType<typeof loadUser>>>;
 
@@ -48,9 +50,6 @@ function match(parts: string[], pattern: string) {
 }
 function str(v: unknown, max = 500) {
   return String(v ?? '').slice(0, max);
-}
-function uploadRoot() {
-  return path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads'));
 }
 
 async function loadUser(id: string) {
@@ -101,12 +100,14 @@ type MsgJson = {
   reactions: Record<string, string[]>;
   attachments: { id: string; filename: string; mime: string; size: number }[];
   replies: MsgJson[];
+  viaAi: boolean;
 };
 function mapMessage(m: {
   id: string; channelId: string; userId: string; text: string; createdAt: Date;
   reactions?: { emoji: string; userId: string }[];
   attachments?: { id: string; filename: string; mime: string; size: number }[];
   replies?: Parameters<typeof mapMessage>[0][];
+  viaAi?: boolean;
 }): MsgJson {
   return {
     id: m.id,
@@ -114,6 +115,7 @@ function mapMessage(m: {
     userId: m.userId,
     text: m.text,
     ts: m.createdAt.toISOString(),
+    viaAi: Boolean(m.viaAi),
     reactions: groupReactions(m.reactions || []),
     attachments: (m.attachments || []).map(mapAtt),
     replies: (m.replies || []).map((r) => mapMessage(r)),
@@ -179,11 +181,13 @@ function mapTask(t: {
   id: string; title: string; status: string; assigneeId: string; creatorId: string;
   start: string; due: string; priority: string; tag: string;
   subtasks: { id: string; title: string; done: boolean; sort: number }[];
+  comments?: { id: string; userId: string; text: string; viaAi: boolean; createdAt: Date }[];
 }) {
   return {
     id: t.id, title: t.title, status: t.status, assigneeId: t.assigneeId, creatorId: t.creatorId,
     start: t.start, due: t.due, priority: t.priority, tag: t.tag,
     subtasks: t.subtasks.slice().sort((a, b) => a.sort - b.sort).map((s) => ({ id: s.id, title: s.title, done: s.done })),
+    comments: (t.comments || []).map((c) => ({ id: c.id, userId: c.userId, text: c.text, viaAi: c.viaAi, ts: c.createdAt.toISOString() })),
   };
 }
 function mapEvent(e: {
@@ -197,6 +201,7 @@ function mapEvent(e: {
 }
 function mapApproval(a: {
   id: string; type: string; title: string; amount: number; requesterId: string; date: string; status: string; note: string;
+  viaAi?: boolean;
   steps: { id: string; approverId: string; position: number; status: string; decidedAt: Date | null }[];
 }) {
   const steps = a.steps.slice().sort((x, y) => x.position - y.position).map((s) => ({
@@ -205,7 +210,7 @@ function mapApproval(a: {
   }));
   return {
     id: a.id, type: a.type, title: a.title, amount: a.amount, requesterId: a.requesterId,
-    date: a.date, status: a.status, note: a.note, steps,
+    date: a.date, status: a.status, note: a.note, viaAi: Boolean(a.viaAi), steps,
     currentApproverId: currentApproverId(a.steps),
   };
 }
@@ -287,6 +292,9 @@ export async function handleApi(req: Request, partsIn: string[] = []) {
     if (method === 'GET' && parts[0] === 'health') return json({ ok: true, service: 'gix-workspace' });
     if (method === 'POST' && match(parts, 'auth/login')) return login(req);
     if (method === 'POST' && match(parts, 'auth/logout')) return logout(req);
+    if ((method === 'GET' || method === 'POST') && match(parts, 'cron/ai-employees')) return cronTick(req);
+    if (method === 'GET' && match(parts, 'agent/context')) return agentContextRoute(req);
+    if (method === 'POST' && match(parts, 'agent/actions')) return agentActionsRoute(req);
     const user = await getUser(req);
     if (!user) return err('unauthorized', 401);
     return await route(req, method, parts, url, user);
@@ -315,14 +323,45 @@ async function logout(req: Request) {
   return withCookie(json({ ok: true }), '', 0);
 }
 
+function cronTick(req: Request) {
+  if (!cronAuthorized(req)) return err('unauthorized', 401);
+  return runLightweightTick('cron').then((result) => json(result));
+}
+
+function agentContextRoute(req: Request) {
+  if (!agentAuthorized(req)) return err('unauthorized', 401);
+  return agentContext().then((result) => json(result));
+}
+
+async function agentActionsRoute(req: Request) {
+  if (!agentAuthorized(req)) return err('unauthorized', 401);
+  const body = await readBody(req);
+  try {
+    return json(await applyAgentActions(Array.isArray(body.actions) ? body.actions : []));
+  } catch (error) {
+    return err(error instanceof Error ? error.message : '失敗しました', 400);
+  }
+}
+
 async function route(req: Request, method: string, parts: string[], url: URL, user: DeptUser) {
   const path = parts.join('/');
-  if (method === 'GET' && path === 'bootstrap') return bootstrap(user);
-  if (method === 'GET' && path === 'stream') return stream(user);
+    if (method === 'GET' && path === 'bootstrap') return bootstrap(user);
+    if (method === 'GET' && path === 'sync') return syncSince(user, url);
+    if (method === 'GET' && path === 'stream') return stream(user);
   if (method === 'PATCH' && path === 'me') return patchMe(req, user);
   if (method === 'GET' && path === 'search') return search(user, url.searchParams.get('q') || '');
   if (method === 'POST' && path === 'ai') return ai(req, user);
-  if (method === 'POST' && path === 'admin/reset') return reset(user);
+    if (method === 'POST' && path === 'admin/reset') return reset(user);
+    if (method === 'GET' && path === 'ai-employees') return json(await todayActivity());
+    if (method === 'POST' && path === 'ai-employees/run') {
+      if (user.role !== 'ceo' && user.role !== 'vp') return err('社長と副社長だけが実行できます', 403);
+      return json(await runLightweightTick('manual'));
+    }
+    if (method === 'POST' && path === 'ai-employees/settings') {
+      if (user.role !== 'ceo') return err('設定は社長だけ変更できます', 403);
+      const body = await readBody(req);
+      return json(await setAiEnabled(Boolean(body.enabled)));
+    }
   if (method === 'POST' && path === 'upload') return upload(req, user);
   if (method === 'GET' && match(parts, 'files/:id')) return download(match(parts, 'files/:id')!.id, user);
 
@@ -359,7 +398,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   }
 
   if (path === 'tasks' && method === 'GET') {
-    const rows = await db().task.findMany({ include: { subtasks: true }, orderBy: { sort: 'asc' } });
+    const rows = await db().task.findMany({ include: { subtasks: true, comments: true }, orderBy: { sort: 'asc' } });
     return json(rows.map(mapTask));
   }
   if (path === 'tasks' && method === 'POST') return saveTask(req, user, null);
@@ -389,7 +428,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
 
   if (path === 'docs' && method === 'GET') {
     const rows = await db().doc.findMany({ include: { attachments: { select: { id: true, filename: true, mime: true, size: true } } } });
-    return json(rows.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, body: d.body, updatedBy: d.updatedBy, updatedOn: d.updatedOn, attachments: d.attachments.map(mapAtt) })));
+    return json(rows.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, body: d.body, updatedBy: d.updatedBy, updatedOn: d.updatedOn, viaAi: d.viaAi, attachments: d.attachments.map(mapAtt) })));
   }
   if (path === 'docs' && method === 'POST') return saveDoc(req, user, null);
   const docAtt = match(parts, 'docs/:id/attach');
@@ -404,7 +443,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   if (doc && method === 'PATCH') return saveDoc(req, user, doc.id);
   if (doc && method === 'DELETE') {
     const atts = await db().attachment.findMany({ where: { docId: doc.id } });
-    for (const a of atts) await unlink(a.path).catch(() => undefined);
+    for (const a of atts) await deleteObject(a.path);
     await db().attachment.deleteMany({ where: { docId: doc.id } });
     await db().doc.delete({ where: { id: doc.id } }).catch(() => null);
     return json({ ok: true });
@@ -439,7 +478,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
 
   if (path === 'meetings' && method === 'GET') {
     const rows = await db().meeting.findMany({ include: { attendees: true } });
-    return json(rows.map((m) => ({ id: m.id, title: m.title, date: m.date, time: m.time, status: m.status, minutes: m.minutes, attendees: m.attendees.map((a) => a.userId) })));
+    return json(rows.map((m) => ({ id: m.id, title: m.title, date: m.date, time: m.time, status: m.status, minutes: m.minutes, minutesViaAi: m.minutesViaAi, attendees: m.attendees.map((a) => a.userId) })));
   }
   if (path === 'meetings' && method === 'POST') return saveMeeting(req, user, null);
   const mt = match(parts, 'meetings/:id');
@@ -481,6 +520,9 @@ async function bootstrap(user: DeptUser) {
     countsFor(user.id),
     db().attendance.findUnique({ where: { userId_date: { userId: user.id, date: todayYMD() } } }),
   ]);
+  if (process.env.NODE_ENV !== 'test') {
+    try { after(() => { void runLightweightTick('visit').catch((error) => console.error(error)); }); } catch { /* outside a request */ }
+  }
   return json({
     me: publicMember(user),
     members: members.map(publicMember),
@@ -489,10 +531,34 @@ async function bootstrap(user: DeptUser) {
     notifications: notifications.map(mapNote),
     counts: { messages: counts.messages, approvals: counts.approvals, tasks: counts.tasks },
     clockedIn: todayRow && !todayRow.outTime ? { inTime: todayRow.inTime } : null,
+    realtime: realtimeMode(),
   });
 }
 
+async function syncSince(user: DeptUser, url: URL) {
+  const sinceRaw = url.searchParams.get('since');
+  const now = new Date().toISOString();
+  if (!sinceRaw) return json({ now, mode: realtimeMode(), events: [] });
+  const since = new Date(sinceRaw);
+  if (Number.isNaN(since.getTime())) return json({ now, mode: realtimeMode(), events: [] });
+  const rows = await db().realtimeEvent.findMany({
+    where: { createdAt: { gt: since } },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  });
+  const events = rows
+    .filter((row) => row.type !== 'notification' || !row.userId || row.userId === user.id)
+    .map((row) => ({
+      type: row.type,
+      channelId: row.channelId || undefined,
+      userId: row.userId || undefined,
+      at: row.createdAt.toISOString(),
+    }));
+  return json({ now, mode: realtimeMode(), events });
+}
+
 function stream(user: DeptUser) {
+  if (realtimeMode() === 'poll') return json({ mode: 'poll' });
   const encoder = new TextEncoder();
   let cleanup = () => {};
   const body = new ReadableStream({
@@ -564,13 +630,57 @@ async function ai(req: Request, user: DeptUser) {
   const body = await readBody(req);
   const q = str(body.q, 2000).trim();
   if (!q) return err('質問を入力してください');
-  const markdown = await answerQuestion(user.id, q, body.channelId ? str(body.channelId, 80) : undefined);
-  return json({ markdown });
+  const channelId = body.channelId ? str(body.channelId, 80) : undefined;
+  const encoder = new TextEncoder();
+  const bodyStream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+      const canned = async () => {
+        const markdown = await answerQuestion(user.id, q, channelId);
+        send({ delta: markdown });
+        send({ done: true, source: 'canned' });
+      };
+      try {
+        const cfg = llmConfig();
+        if (!cfg) {
+          await canned();
+        } else {
+          const context = await buildAiContext(user.id, q, channelId);
+          let any = false;
+          for await (const delta of streamChat(cfg, `${AI_SYSTEM}\n\n${context}`, q)) {
+            any = true;
+            send({ delta });
+          }
+          if (!any) await canned();
+          else send({ done: true, source: 'llm' });
+        }
+      } catch (error) {
+        console.error('ai failed', error);
+        send({ delta: '\n\n> モデルへの接続に失敗したため、社内データだけの下書きに切り替えました。\n\n' });
+        await canned().catch(() => send({ delta: '応答に失敗しました。' }));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(bodyStream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
 
 async function reset(user: DeptUser) {
   if (user.role !== 'ceo') return err('データ初期化は社長のみ実行できます', 403);
-  await seedDatabase({ reset: true });
+  try {
+    await seedDatabase({ reset: true });
+  } catch (error) {
+    return err(error instanceof Error ? error.message : '初期化できません', 403);
+  }
   return json({ ok: true });
 }
 
@@ -580,12 +690,10 @@ async function upload(req: Request, user: DeptUser) {
   if (!(file instanceof File)) return err('ファイルがありません');
   if (file.size > 8 * 1024 * 1024) return err('8MBまでのファイルを添付できます');
   const id = randomUUID();
-  const root = uploadRoot();
-  await mkdir(root, { recursive: true });
-  const storage = path.join(root, id);
-  await writeFile(storage, Buffer.from(await file.arrayBuffer()));
+  const mime = file.type || 'application/octet-stream';
+  const key = await putObject(id, Buffer.from(await file.arrayBuffer()), mime);
   const row = await db().attachment.create({
-    data: { id, filename: file.name.slice(0, 180) || 'file', mime: file.type || 'application/octet-stream', size: file.size, path: storage, userId: user.id },
+    data: { id, filename: file.name.slice(0, 180) || 'file', mime, size: file.size, path: key, userId: user.id },
   });
   return json(mapAtt(row));
 }
@@ -593,16 +701,13 @@ async function upload(req: Request, user: DeptUser) {
 async function download(id: string, _user: DeptUser) {
   const att = await db().attachment.findUnique({ where: { id } });
   if (!att) return err('ファイルがありません', 404);
-  const root = uploadRoot();
-  const resolved = path.resolve(att.path);
-  if (!resolved.startsWith(root + path.sep)) return err('forbidden', 403);
-  const buf = await readFile(resolved).catch(() => null);
-  if (!buf) return err('ファイルがありません', 404);
+  const stored = await getObject(att.path);
+  if (!stored) return err('ファイルがありません', 404);
   const disp = att.mime.startsWith('image/') ? 'inline' : 'attachment';
-  return new Response(buf, {
+  return new Response(new Uint8Array(stored.body), {
     headers: {
       'Content-Type': att.mime,
-      'Content-Length': String(buf.length),
+      'Content-Length': String(stored.body.length),
       'Content-Disposition': `${disp}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       'Cache-Control': 'private, max-age=3600',
     },

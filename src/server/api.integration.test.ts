@@ -2,9 +2,17 @@ import { execSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { beforeAll, expect, test } from 'vitest';
 
-process.env.DATABASE_URL = 'file:/tmp/gix-vitest.db';
+const dbUrl = process.env.CI && process.env.DATABASE_URL?.startsWith('postgres')
+  ? process.env.DATABASE_URL
+  : 'postgresql://gix:gix@127.0.0.1:5432/gix_test';
+process.env.DATABASE_URL = dbUrl;
+process.env.DIRECT_URL = dbUrl;
 process.env.AUTH_SECRET = 'test-secret';
 process.env.UPLOAD_DIR = '/tmp/gix-vitest-uploads';
+process.env.STORAGE_DRIVER = 'local';
+process.env.REALTIME_MODE = 'poll';
+process.env.AGENT_API_TOKEN = 'agent-test-token';
+process.env.CRON_SECRET = 'cron-test-token';
 
 type Handler = (req: Request, parts?: string[]) => Promise<Response>;
 let handleApi: Handler;
@@ -25,10 +33,9 @@ function call(method: string, path: string, opts: { token?: string; json?: unkno
 }
 
 beforeAll(async () => {
-  rmSync('/tmp/gix-vitest.db', { force: true });
   rmSync('/tmp/gix-vitest-uploads', { recursive: true, force: true });
   mkdirSync('/tmp/gix-vitest-uploads', { recursive: true });
-  execSync('npx prisma db push --skip-generate --accept-data-loss', {
+  execSync('npx prisma migrate deploy', {
     stdio: 'pipe',
     env: process.env,
   });
@@ -125,6 +132,14 @@ test('multi-step approval, messenger, mentions, and attachments', async () => {
   const file = await call('GET', `/api/files/${uploaded.id}`, { token: chima.token });
   expect(file.status).toBe(200);
   expect(await file.text()).toBe('gix-memo');
+
+  const sync = await (await call('GET', '/api/sync?since=2020-01-01T00:00:00.000Z', { token: chima.token })).json();
+  expect(sync.events.some((e: { type: string }) => e.type === 'message')).toBe(true);
+  const ai = await call('POST', '/api/ai', { token: chima.token, json: { q: '今日の優先事項' } });
+  expect(ai.headers.get('content-type') || '').toContain('text/event-stream');
+  const body = await ai.text();
+  expect(body).toContain('優先');
+  expect(body).toContain('"source":"canned"');
 });
 
 test('bot replies in a direct message and attendance is per user', async () => {
@@ -149,4 +164,32 @@ test('bot replies in a direct message and attendance is per user', async () => {
   const own = await (await call('GET', '/api/attendance', { token: sato.token })).json();
   expect(own.every((r: { date: string }) => r.date !== satoBoot.me && true)).toBe(true);
   expect(own.some((r: { outTime: string | null }) => r.outTime)).toBe(true);
+});
+
+test('agent API writes as an employee and cron is protected', async () => {
+  const denied = await call('GET', '/api/agent/context');
+  expect(denied.status).toBe(401);
+  const ctx = await (await call('GET', '/api/agent/context', { token: 'agent-test-token' })).json();
+  expect(ctx.employees).toHaveLength(20);
+  expect(ctx.employees.some((e: { id: string }) => e.id === 'chima')).toBe(false);
+  expect(ctx.company.hq).toBe('埼玉県');
+
+  const posted = await (await call('POST', '/api/agent/actions', {
+    token: 'agent-test-token',
+    json: { actions: [
+      { employeeId: 'sato', type: 'post', channelId: 'plan', text: 'おはようございます。企画の朝会です。' },
+      { employeeId: 'sato', type: 'clock', action: 'in' },
+      { employeeId: 'chima', type: 'post', channelId: 'general', text: '社長はエージェントになりません' },
+    ] },
+  })).json();
+  expect(posted.ok).toBe(2);
+  expect(posted.failed).toBe(1);
+  const msgs = await (await call('GET', '/api/channels/plan/messages', { token: (await login('chima@gix.example')).token })).json();
+  const hit = msgs.find((m: { text: string }) => m.text.includes('企画の朝会'));
+  expect(hit.viaAi).toBe(true);
+
+  const noCron = await call('GET', '/api/cron/ai-employees');
+  expect(noCron.status).toBe(401);
+  const cron = await call('GET', '/api/cron/ai-employees', { token: 'cron-test-token' });
+  expect(cron.status).toBe(200);
 });

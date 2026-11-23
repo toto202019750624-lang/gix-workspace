@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { EVENT_COLORS } from '@/lib/constants';
-import { DOW, addDaysStr, fmtMD, todayYMD, utcDow } from '@/lib/dates';
+import { placeEvents } from '@/lib/calendar-layout';
+import { DOW, addDaysStr, fmtMD, todayYMD, tokyoParts, utcDow } from '@/lib/dates';
 import { api } from '@/lib/http';
 import type { CalEvent } from '@/lib/types';
 import { Icon } from '../icons';
@@ -126,21 +127,25 @@ function Week({ mode, cursor, today, events, onCreate, onEdit }: { mode: 'week' 
         <div>{Array.from({ length: H1 - H0 }, (_, i) => <div className="wk-hr" key={i}>{H0 + i}:00</div>)}</div>
         {days.map((ds) => {
           const evs = events.filter((e) => e.date === ds);
+          const placed = placeEvents(evs.map((e) => {
+            const [sh, sm] = e.start.split(':').map(Number);
+            const [eh, em] = e.end.split(':').map(Number);
+            return { e, start: sh * 60 + sm, end: eh * 60 + em };
+          }));
+          const clock = tokyoParts(now);
           return (
             <div className="wk-col" key={ds}>
               {Array.from({ length: H1 - H0 }, (_, i) => <div className="wk-slot" key={i} onClick={() => onCreate(ds, `${String(H0 + i).padStart(2, '0')}:00`)} />)}
-              {evs.map((e) => {
-                const [sh, sm] = e.start.split(':').map(Number);
-                const [eh, em] = e.end.split(':').map(Number);
-                const top = ((sh - H0) * 60 + sm) / 60 * 48;
-                const ht = Math.max(22, ((eh - sh) * 60 + em - sm) / 60 * 48);
+              {placed.map(({ e, start, end, col, cols }) => {
+                const top = ((Math.floor(start / 60) - H0) * 60 + (start % 60)) / 60 * 48;
+                const ht = Math.max(22, (end - start) / 60 * 48);
                 return (
-                  <div key={e.id} className="wk-ev" style={{ top, height: ht, background: e.color + '1f', boxShadow: `inset 3px 0 0 ${e.color}` }} onClick={() => onEdit(e)}>
+                  <div key={e.id} className="wk-ev" style={{ top, height: ht, left: `calc(${(col / cols) * 100}% + 2px)`, width: `calc(${100 / cols}% - 4px)`, right: 'auto', background: e.color + '1f', boxShadow: `inset 3px 0 0 ${e.color}` }} onClick={() => onEdit(e)}>
                     <b>{e.title}</b><br />{e.start}–{e.end}{mode === 'day' ? ` ・ ${e.place || ''} ・ ${e.attendees.map((a) => member(a).name).slice(0, 5).join('、')}` : ''}
                   </div>
                 );
               })}
-              {ds === today ? <div style={{ position: 'absolute', left: 0, right: 0, top: ((now.getHours() - H0) * 60 + now.getMinutes()) / 60 * 48, height: 1.5, background: 'var(--r)' }} /> : null}
+              {ds === today ? <div style={{ position: 'absolute', left: 0, right: 0, top: ((Number(clock.hour) - H0) * 60 + Number(clock.minute)) / 60 * 48, height: 1.5, background: 'var(--r)' }} /> : null}
             </div>
           );
         })}
