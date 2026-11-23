@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "prisma generate && next build",
-    "vercel-build": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
+    "vercel-build": "prisma generate && if [ \"$VERCEL_ENV\" = production ]; then PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=1 prisma migrate deploy && tsx prisma/seed.ts; fi && next build",
     "start": "tsx scripts/start.ts",
     "test": "vitest run",
     "db:migrate": "prisma migrate deploy",
