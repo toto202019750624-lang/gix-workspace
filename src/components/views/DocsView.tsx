@@ -73,7 +73,16 @@ export function DocsView() {
     load();
   }
 
-  if (!doc) return <div className="empty">ドキュメントがありません</div>;
+  if (!doc) {
+    return (
+      <div className="card" style={{ padding: 28 }}>
+        <div className="empty">ドキュメントはまだありません</div>
+        <div style={{ textAlign: 'center' }}>
+          <button className="btn primary" type="button" onClick={async () => { const d = await api<Doc>('/api/docs', { method: 'POST', body: JSON.stringify({}) }); setId(d.id); load(); }}><Icon name="plus" /> 新規ドキュメント</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="docs">
       <div className="card tree">

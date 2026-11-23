@@ -8,7 +8,7 @@ import { extractMentions } from '../lib/mentions';
 import { hmNow, hmToMinutes, todayYMD } from '../lib/dates';
 import { bus, publish, realtimeMode } from './bus';
 import { answerQuestion, buildAiContext } from './ai';
-import { seedDatabase } from '../lib/seed-run';
+import { resetBusinessData, seedDatabase } from '../lib/seed-run';
 import { llmConfig, streamChat, AI_SYSTEM } from './llm';
 import { deleteObject, getObject, putObject } from './storage';
 import { agentAuthorized, agentContext, applyAgentActions, cronAuthorized, runLightweightTick, setAiEnabled, todayActivity } from './agent';
@@ -295,6 +295,7 @@ export async function handleApi(req: Request, partsIn: string[] = []) {
     if ((method === 'GET' || method === 'POST') && match(parts, 'cron/ai-employees')) return cronTick(req);
     if (method === 'GET' && match(parts, 'agent/context')) return agentContextRoute(req);
     if (method === 'POST' && match(parts, 'agent/actions')) return agentActionsRoute(req);
+    if (method === 'POST' && match(parts, 'agent/reset-business-data')) return agentResetBusiness(req);
     const user = await getUser(req);
     if (!user) return err('unauthorized', 401);
     return await route(req, method, parts, url, user);
@@ -352,6 +353,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   if (method === 'GET' && path === 'search') return search(user, url.searchParams.get('q') || '');
   if (method === 'POST' && path === 'ai') return ai(req, user);
     if (method === 'POST' && path === 'admin/reset') return reset(user);
+    if (method === 'POST' && path === 'admin/reset-business') return resetBusiness(user);
     if (method === 'GET' && path === 'ai-employees') return json(await todayActivity());
     if (method === 'POST' && path === 'ai-employees/run') {
       if (user.role !== 'ceo' && user.role !== 'vp') return err('社長と副社長だけが実行できます', 403);
@@ -677,11 +679,21 @@ async function ai(req: Request, user: DeptUser) {
 async function reset(user: DeptUser) {
   if (user.role !== 'ceo') return err('データ初期化は社長のみ実行できます', 403);
   try {
-    await seedDatabase({ reset: true });
+    await seedDatabase({ reset: true, demo: true });
   } catch (error) {
     return err(error instanceof Error ? error.message : '初期化できません', 403);
   }
   return json({ ok: true });
+}
+
+async function resetBusiness(user: DeptUser) {
+  if (user.role !== 'ceo') return err('業務データの初期化は社長のみ実行できます', 403);
+  return json(await resetBusinessData());
+}
+
+async function agentResetBusiness(req: Request) {
+  if (!agentAuthorized(req)) return err('unauthorized', 401);
+  return json(await resetBusinessData());
 }
 
 async function upload(req: Request, user: DeptUser) {
@@ -895,8 +907,12 @@ async function saveDoc(req: Request, user: DeptUser, id: string | null) {
   const body = await readBody(req);
   if (!id) {
     const folders = await db().folder.findMany({ orderBy: { sort: 'asc' } });
-    const folderId = str(body.folderId, 80) || folders[0]?.id;
-    if (!folderId) return err('フォルダがありません');
+    let folderId = str(body.folderId, 80) || folders[0]?.id;
+    if (folderId && !(await db().folder.findUnique({ where: { id: folderId } }))) folderId = folders[0]?.id;
+    if (!folderId) {
+      const created = await db().folder.create({ data: { id: randomUUID(), name: 'ドキュメント', open: true, sort: 0 } });
+      folderId = created.id;
+    }
     const row = await db().doc.create({
       data: { id: randomUUID(), folderId, title: str(body.title, 160).trim() || '無題のドキュメント', body: str(body.body, 20000) || '# 無題のドキュメント\n\nここに内容を書いてください。', updatedBy: user.id, updatedOn: todayYMD() },
     });

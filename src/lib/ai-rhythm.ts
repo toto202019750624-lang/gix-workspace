@@ -35,6 +35,7 @@ export type Action =
   | { type: 'post'; channelId: string; text: string; parentId?: string }
   | { type: 'react'; messageId: string; emoji: string }
   | { type: 'task'; taskId: string; status?: string; subtaskId?: string; done?: boolean; comment?: string }
+  | { type: 'task'; title: string; assigneeId: string; status: string; due?: string; priority: string }
   | { type: 'approval'; title: string; approvalType: string; amount: number; note: string; approverId: string }
   | { type: 'decide'; approvalId: string; decision: 'approved' | 'rejected'; reason: string }
   | { type: 'minutes'; meetingId: string; text: string }
@@ -205,7 +206,7 @@ export function sanitizeAction(raw: unknown, emp: EmpRef): Action | null {
   if (type === 'react' && typeof row.messageId === 'string' && typeof row.emoji === 'string') {
     return { type: 'react', messageId: row.messageId, emoji: row.emoji.slice(0, 8) };
   }
-  if (type === 'task' && typeof row.taskId === 'string') {
+  if (type === 'task' && typeof row.taskId === 'string' && row.taskId) {
     const status = typeof row.status === 'string' && STATUSES.has(row.status) ? row.status : undefined;
     return {
       type: 'task',
@@ -214,6 +215,18 @@ export function sanitizeAction(raw: unknown, emp: EmpRef): Action | null {
       subtaskId: typeof row.subtaskId === 'string' ? row.subtaskId : undefined,
       done: row.done === true,
       comment: typeof row.comment === 'string' ? clip(row.comment, 400) : undefined,
+    };
+  }
+  if (type === 'task' && typeof row.title === 'string' && row.title.trim()) {
+    const status = typeof row.status === 'string' && STATUSES.has(row.status) ? row.status : 'todo';
+    const priority = row.priority === '高' || row.priority === '中' || row.priority === '低' ? row.priority : '中';
+    return {
+      type: 'task',
+      title: clip(row.title, 160),
+      assigneeId: typeof row.assigneeId === 'string' && row.assigneeId ? row.assigneeId : emp.id,
+      status,
+      due: typeof row.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.due) ? row.due : undefined,
+      priority,
     };
   }
   if (type === 'approval' && typeof row.title === 'string') {

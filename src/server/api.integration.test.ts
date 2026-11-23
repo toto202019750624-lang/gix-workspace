@@ -42,7 +42,7 @@ beforeAll(async () => {
   const mod = await import('./api');
   handleApi = mod.handleApi;
   const seed = await import('../lib/seed-run');
-  await seed.seedDatabase({ reset: true });
+  await seed.seedDatabase({ reset: true, demo: true });
 }, 120000);
 
 async function login(email: string) {
@@ -174,6 +174,9 @@ test('agent API refuses every request when AGENT_API_TOKEN is unset', async () =
     expect((await call('GET', '/api/agent/context', { token: 'anything' })).status).toBe(401);
     expect((await call('POST', '/api/agent/actions', { json: { actions: [] } })).status).toBe(401);
     expect((await call('POST', '/api/agent/actions', { token: prev, json: { actions: [] } })).status).toBe(401);
+    expect((await call('POST', '/api/agent/reset-business-data')).status).toBe(401);
+    expect((await call('POST', '/api/agent/reset-business-data', { token: 'anything' })).status).toBe(401);
+    expect((await call('POST', '/api/agent/reset-business-data', { token: prev })).status).toBe(401);
   } finally {
     process.env.AGENT_API_TOKEN = prev;
   }
@@ -205,4 +208,40 @@ test('agent API writes as an employee and cron is protected', async () => {
   expect(noCron.status).toBe(401);
   const cron = await call('GET', '/api/cron/ai-employees', { token: 'cron-test-token' });
   expect(cron.status).toBe(200);
+});
+
+test('business reset keeps people and lets an employee create a task', async () => {
+  const sato = await login('sato@gix.example');
+  expect((await call('POST', '/api/admin/reset-business', { token: sato.token })).status).toBe(403);
+  const chima = await login('chima@gix.example');
+  const before = await (await call('GET', '/api/bootstrap', { token: chima.token })).json();
+  expect(before.members).toHaveLength(21);
+
+  const wiped = await (await call('POST', '/api/agent/reset-business-data', { token: 'agent-test-token' })).json();
+  expect(wiped.users).toBe(21);
+  expect(wiped.channels).toBeGreaterThan(0);
+  expect(wiped.messages).toBe(0);
+  expect(wiped.tasks).toBe(0);
+  const again = await (await call('POST', '/api/admin/reset-business', { token: chima.token })).json();
+  expect(again.messages).toBe(0);
+  expect(again.users).toBe(21);
+
+  const ctx = await (await call('GET', '/api/agent/context', { token: 'agent-test-token' })).json();
+  expect(ctx.employees).toHaveLength(20);
+  expect(ctx.employees.every((e: { tasks: unknown[] }) => e.tasks.length === 0)).toBe(true);
+  expect(ctx.recentChannels.every((c: { messages: unknown[] }) => c.messages.length === 0)).toBe(true);
+
+  const created = await (await call('POST', '/api/agent/actions', {
+    token: 'agent-test-token',
+    json: { actions: [{ employeeId: 'sato', type: 'task', title: '朝会のアジェンダ', assigneeId: 'takahashi', priority: '高' }] },
+  })).json();
+  expect(created.ok).toBe(1);
+  expect(created.results[0].summary).toContain('朝会のアジェンダ');
+  const tasks = await (await call('GET', '/api/tasks', { token: chima.token })).json();
+  expect(tasks).toEqual([expect.objectContaining({ title: '朝会のアジェンダ', assigneeId: 'takahashi', creatorId: 'sato', priority: '高', status: 'todo' })]);
+
+  const channels = await (await call('GET', '/api/channels', { token: chima.token })).json();
+  expect(channels.some((c: { id: string }) => c.id === 'general')).toBe(true);
+  const general = await (await call('GET', '/api/channels/general/messages', { token: chima.token })).json();
+  expect(general).toEqual([]);
 });

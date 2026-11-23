@@ -261,6 +261,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
     await api('/api/admin/reset', { method: 'POST' });
     location.reload();
   }
+  async function resetBusiness() {
+    if (!confirm('業務データを初期化します。メッセージ、タスク、承認、予定、会議、ドキュメント、ベース、勤怠、通知、OKR、AIの記録を消します。会社情報・社員・部署・チャンネルは残ります。元に戻せません。')) return;
+    await api('/api/admin/reset-business', { method: 'POST' });
+    location.reload();
+  }
   async function logout() {
     markLeaving();
     window.dispatchEvent(new Event('gix-stop'));
@@ -301,10 +306,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
             <div className="nav-item" onClick={logout}><Icon name="x" /><span>ログアウト</span></div>
             {session.me.role === 'ceo' ? (
-              <div className="nav-item" onClick={resetData} title="データ初期化">
-                <Icon name="reply" />
-                <span>データ初期化</span>
-              </div>
+              <>
+                <div className="nav-item" onClick={resetBusiness} title="業務データを初期化">
+                  <Icon name="trash" />
+                  <span>業務データを初期化</span>
+                </div>
+                <div className="nav-item" onClick={resetData} title="データ初期化">
+                  <Icon name="reply" />
+                  <span>データ初期化</span>
+                </div>
+              </>
             ) : null}
           </div>
         </aside>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { addDaysStr, fmtMD, greet, hmNow, todayYMD } from '@/lib/dates';
+import { homeMetrics } from '@/lib/home-metrics';
 import { greetName, yen } from '@/lib/format';
 import { api } from '@/lib/http';
 import type { Announcement, Approval, BaseRow, CalEvent, Task } from '@/lib/types';
@@ -41,10 +42,8 @@ export function HomeView() {
   const command = me.role === 'ceo' || me.role === 'vp';
   const mine = (command ? ownOpen.concat(data.tasks.filter((t) => t.assigneeId !== me.id && t.status !== 'done' && t.priority === '高')) : ownOpen).slice(0, 5);
   const soon = (command ? data.tasks : ownOpen).filter((t) => t.status !== 'done' && t.due <= addDaysStr(today, 2)).length;
-  const vids = data.base.filter((r) => r.status === '公開').length;
-  const views = data.base.reduce((s, r) => s + Number(r.views || 0), 0);
-  const days = Array.from({ length: 7 }, (_, i) => fmtMD(addDaysStr(today, i - 6)).replace(/\(.\)/, ''));
-  const weekly = [14, 18, 11, 22, 19, 25, 28];
+  const metrics = homeMetrics(data.base.map((r) => ({ status: r.status, publish: r.publish, views: Number(r.views || 0) })), today);
+  const weeklyPeak = Math.max(...metrics.weekly, 0);
   async function approve(id: string) {
     await api(`/api/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision: 'approved' }) });
     toast('承認しました');
@@ -74,10 +73,10 @@ export function HomeView() {
         </div>
       </div>
       <div className="grid g4" style={{ marginBottom: 16 }}>
-        <Kpi label="今月の制作本数" num={String(74 + vids)} delta="+18% 前月比" values={[42, 48, 51, 55, 60, 66, 70, 74 + vids]} color="#6a6fc4" ic="film" />
-        <Kpi label="チャンネル総再生" num={`${(12.4 + views / 1e6).toFixed(1)}M`} delta="+34% 前週比" values={[6, 7.2, 7.8, 8.9, 9.6, 11, 12.1, 12.4 + views / 1e6]} color="#4a90a4" ic="eye" />
-        <Kpi label="フォロワー" num="31.2万" delta="+2.4万 今月" values={[18, 20, 22, 23.5, 25, 27, 29.5, 31.2]} color="#c2697f" ic="users" />
-        <Kpi label="平均エンゲージ率" num="6.4%" delta="+0.8pt" values={[4.8, 5.1, 5.0, 5.6, 5.9, 6.0, 6.2, 6.4]} color="#5e9c7e" ic="trend" />
+        <Kpi label="今月の制作本数" num={String(metrics.videos)} delta={metrics.videoDelta} up={metrics.videoUp} values={metrics.videoSpark} color="#6a6fc4" ic="film" />
+        <Kpi label="チャンネル総再生" num={metrics.viewsLabel} delta={metrics.viewDelta} up={metrics.viewUp} values={metrics.viewSpark} color="#4a90a4" ic="eye" />
+        <Kpi label="フォロワー" num={metrics.followersLabel} delta="0" up={false} values={metrics.zeroSpark} color="#c2697f" ic="users" />
+        <Kpi label="平均エンゲージ率" num={metrics.engageLabel} delta="0" up={false} values={metrics.zeroSpark} color="#5e9c7e" ic="trend" />
       </div>
       <div className="card" style={{ marginBottom: 16 }}>
         <h3><Icon name="spark" /> 今日のAI社員<span className="more" onClick={() => router.push('/ai-staff')}>すべて →</span></h3>
@@ -135,6 +134,7 @@ export function HomeView() {
         </div>
         <div className="card span2">
           <h3><Icon name="bell" /> お知らせ</h3>
+          {data.ann.length ? null : <div className="empty">お知らせはありません</div>}
           {data.ann.map((a) => (
             <div className="list-item" key={a.id} style={{ alignItems: 'flex-start' }}>
               <Avatar member={member(a.authorId)} />
@@ -149,7 +149,7 @@ export function HomeView() {
         </div>
         <div className="card">
           <h3><Icon name="film" /> 週間 公開本数</h3>
-          <div className="bar-chart">{weekly.map((v, i) => <div key={days[i]} style={{ height: `${(v / 28) * 100}%` }} title={`${v}本`}><span>{days[i]}</span></div>)}</div>
+          <div className="bar-chart">{metrics.weekly.map((v, i) => <div key={metrics.weekLabels[i]} style={{ height: weeklyPeak ? `${(v / weeklyPeak) * 100}%` : '0%', minHeight: v ? undefined : 0 }} title={`${v}本`}><span>{metrics.weekLabels[i]}</span></div>)}</div>
           <div style={{ height: 22 }} />
           <div className="row small muted"><span>パイプライン</span><span style={{ marginLeft: 'auto' }}>{['企画', '撮影', '編集', '確認', '公開'].map((s) => `${s} ${data.base.filter((r) => r.status === s).length}`).join(' / ')}</span></div>
         </div>
@@ -165,12 +165,12 @@ function LiveClock() {
   return <>{t}</>;
 }
 
-function Kpi({ label, num, delta, values, color, ic }: { label: string; num: string; delta: string; values: number[]; color: string; ic: string }) {
+function Kpi({ label, num, delta, up, values, color, ic }: { label: string; num: string; delta: string; up: boolean; values: number[]; color: string; ic: string }) {
   return (
     <div className="card kpi">
       <div className="row"><span className="lbl">{label}</span><span style={{ marginLeft: 'auto' }} className="faint"><Icon name={ic} /></span></div>
       <div className="num">{num}</div>
-      <div className="delta">▲ {delta}</div>
+      <div className="delta">{up ? `▲ ${delta}` : delta}</div>
       <Spark values={values} color={color} />
     </div>
   );

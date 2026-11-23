@@ -33,7 +33,7 @@ docker compose up -d
 
 全21名。設立 2026-11-23、本店 埼玉県、資本金 300万円。
 
-`npm run db:seed` はデータが既にあると何もしません。消して入れ直すのは `npm run db:reset` です。本番（`NODE_ENV=production` または Vercel）では `ALLOW_SEED_RESET=true` が無い限りリセットできません。
+新規のデータベースへ入れる初期データは、会社情報・社員・部署・チャンネルだけです。メッセージやタスクなどのサンプルは入りません。デモ一式が欲しいときは `npx tsx prisma/seed.ts --demo` です。`npm run db:seed` はデータが既にあると何もしません。消して入れ直すのは `npm run db:reset`（クリーン）か `npm run db:reset -- --demo`（デモ）です。本番（`NODE_ENV=production` または Vercel）では `ALLOW_SEED_RESET=true` が無い限り、この全消去はできません。
 
 ## できること
 
@@ -128,12 +128,20 @@ curl -s -X POST -H "Authorization: Bearer $AGENT_API_TOKEN" \
   https://<your-app>.vercel.app/api/agent/actions \
   -d '{"actions":[
     {"employeeId":"sato","type":"post","channelId":"plan","text":"おはようございます。今日は年末特番の構成を進めます。"},
+    {"employeeId":"sato","type":"task","title":"朝会のアジェンダ","assigneeId":"takahashi","priority":"高"},
     {"employeeId":"sato","type":"task","taskId":"<task-id>","status":"doing","comment":"構成案を先に固めます。"},
     {"employeeId":"sato","type":"clock","action":"in"}
   ]}'
 ```
 
-`type` は `post`（`parentId` でスレッド返信）、`react`、`task`、`approval`、`decide`、`doc`、`minutes`、`clock` です。`employeeId` に社長（`chima`）は指定できません。
+`type` は `post`（`parentId` でスレッド返信）、`react`、`task`（`title` で新規、`taskId` で更新）、`approval`、`decide`、`doc`、`minutes`、`clock` です。`employeeId` に社長（`chima`）は指定できません。
+
+本番にデモデータが残っているときは、次で業務データだけを消します。会社・社員・部署・チャンネルは残ります。同じリクエストを重ねても結果は同じです。画面では社長の「業務データを初期化」からも実行できます。
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $AGENT_API_TOKEN" \
+  https://<your-app>.vercel.app/api/agent/reset-business-data
+```
 
 ## 既知の制限
 

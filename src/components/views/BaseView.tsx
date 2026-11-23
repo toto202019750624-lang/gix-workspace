@@ -108,6 +108,7 @@ export function BaseView() {
             </tr>
           </thead>
           <tbody>
+            {!group && !view.length ? <tr><td colSpan={9} className="empty">行はまだありません</td></tr> : null}
             {group ? STAGES.map((s) => {
               const g = view.filter((r) => r.status === s);
               return [<tr key={s}><td colSpan={9} style={{ background: STAGE_C[s] + '18', fontWeight: 700 }}><span style={{ color: STAGE_C[s] }}>●</span> {s} <span className="badge b-m">{g.length}</span></td></tr>, ...g.map(rowH)];

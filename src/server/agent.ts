@@ -273,6 +273,31 @@ async function executeAction(employeeId: string, name: string, action: Action) {
     await logActivity(employeeId, 'reaction', summary);
     return summary;
   }
+  if (action.type === 'task' && 'title' in action) {
+    const assignee = await db().user.findUnique({ where: { id: action.assigneeId } });
+    if (!assignee) throw new Error('担当者が見つかりません');
+    const today = todayYMD();
+    const sort = (await db().task.aggregate({ _max: { sort: true } }))._max.sort ?? 0;
+    const id = randomUUID();
+    await db().task.create({
+      data: {
+        id,
+        title: action.title,
+        status: action.status,
+        assigneeId: assignee.id,
+        creatorId: employeeId,
+        start: today,
+        due: action.due || today,
+        priority: action.priority,
+        tag: '社内',
+        sort: sort + 1,
+      },
+    });
+    publish({ type: 'task' });
+    const summary = `${name}がタスク「${action.title}」を作成しました`;
+    await logActivity(employeeId, 'task', summary);
+    return summary;
+  }
   if (action.type === 'task') {
     const task = await db().task.findUnique({ where: { id: action.taskId }, include: { subtasks: true } });
     if (!task || task.assigneeId !== employeeId) throw new Error('自分のタスクだけ更新できます');
@@ -340,9 +365,8 @@ async function executeAction(employeeId: string, name: string, action: Action) {
     await logActivity(employeeId, 'meeting', summary);
     return summary;
   }
-  const folder = await db().folder.findUnique({ where: { id: action.folderId } });
-  const folderId = folder?.id || (await db().folder.findFirst({ orderBy: { sort: 'asc' } }))?.id;
-  if (!folderId) throw new Error('フォルダがありません');
+  const folder = action.folderId ? await db().folder.findUnique({ where: { id: action.folderId } }) : null;
+  const folderId = folder?.id || (await db().folder.findFirst({ orderBy: { sort: 'asc' } }))?.id || (await db().folder.create({ data: { id: randomUUID(), name: 'ドキュメント', open: true, sort: 0 } })).id;
   const id = randomUUID();
   await db().doc.create({
     data: { id, folderId, title: action.title, body: action.body, updatedBy: employeeId, updatedOn: todayYMD(), viaAi: true },
