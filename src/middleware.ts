@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC = new Set(['/login', '/api/auth/login', '/api/auth/logout', '/api/health']);
+const PUBLIC = new Set([
+  '/login',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/health',
+  '/api/cron/ai-employees',
+  '/api/agent/context',
+  '/api/agent/actions',
+]);
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

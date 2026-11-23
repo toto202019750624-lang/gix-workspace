@@ -11,6 +11,8 @@ process.env.AUTH_SECRET = 'test-secret';
 process.env.UPLOAD_DIR = '/tmp/gix-vitest-uploads';
 process.env.STORAGE_DRIVER = 'local';
 process.env.REALTIME_MODE = 'poll';
+process.env.AGENT_API_TOKEN = 'agent-test-token';
+process.env.CRON_SECRET = 'cron-test-token';
 
 type Handler = (req: Request, parts?: string[]) => Promise<Response>;
 let handleApi: Handler;
@@ -162,4 +164,32 @@ test('bot replies in a direct message and attendance is per user', async () => {
   const own = await (await call('GET', '/api/attendance', { token: sato.token })).json();
   expect(own.every((r: { date: string }) => r.date !== satoBoot.me && true)).toBe(true);
   expect(own.some((r: { outTime: string | null }) => r.outTime)).toBe(true);
+});
+
+test('agent API writes as an employee and cron is protected', async () => {
+  const denied = await call('GET', '/api/agent/context');
+  expect(denied.status).toBe(401);
+  const ctx = await (await call('GET', '/api/agent/context', { token: 'agent-test-token' })).json();
+  expect(ctx.employees).toHaveLength(20);
+  expect(ctx.employees.some((e: { id: string }) => e.id === 'chima')).toBe(false);
+  expect(ctx.company.hq).toBe('埼玉県');
+
+  const posted = await (await call('POST', '/api/agent/actions', {
+    token: 'agent-test-token',
+    json: { actions: [
+      { employeeId: 'sato', type: 'post', channelId: 'plan', text: 'おはようございます。企画の朝会です。' },
+      { employeeId: 'sato', type: 'clock', action: 'in' },
+      { employeeId: 'chima', type: 'post', channelId: 'general', text: '社長はエージェントになりません' },
+    ] },
+  })).json();
+  expect(posted.ok).toBe(2);
+  expect(posted.failed).toBe(1);
+  const msgs = await (await call('GET', '/api/channels/plan/messages', { token: (await login('chima@gix.example')).token })).json();
+  const hit = msgs.find((m: { text: string }) => m.text.includes('企画の朝会'));
+  expect(hit.viaAi).toBe(true);
+
+  const noCron = await call('GET', '/api/cron/ai-employees');
+  expect(noCron.status).toBe(401);
+  const cron = await call('GET', '/api/cron/ai-employees', { token: 'cron-test-token' });
+  expect(cron.status).toBe(200);
 });

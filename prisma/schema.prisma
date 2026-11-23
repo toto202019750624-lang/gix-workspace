@@ -61,6 +61,8 @@ model User {
   channelMembers   ChannelMember[]
   channelReads     ChannelRead[]
   docsTouched      Doc[]           @relation("DocEditor")
+  aiActivities     AiActivity[]
+  taskComments     TaskComment[]
 }
 
 model Session {
@@ -110,6 +112,7 @@ model Message {
   userId      String
   user        User     @relation(fields: [userId], references: [id])
   text        String   @default("")
+  viaAi       Boolean  @default(false)
   parentId    String?
   parent      Message? @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
   replies     Message[] @relation("Thread")
@@ -181,6 +184,7 @@ model Task {
   tag        String
   sort       Int       @default(0)
   subtasks   Subtask[]
+  comments   TaskComment[]
 }
 
 model Subtask {
@@ -190,6 +194,19 @@ model Subtask {
   title  String
   done   Boolean @default(false)
   sort   Int     @default(0)
+}
+
+model TaskComment {
+  id        String   @id
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  text      String
+  viaAi     Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
 }
 
 model Folder {
@@ -209,6 +226,7 @@ model Doc {
   updatedBy  String
   editor     User         @relation("DocEditor", fields: [updatedBy], references: [id])
   updatedOn  String
+  viaAi      Boolean      @default(false)
   attachments Attachment[]
 }
 
@@ -235,6 +253,7 @@ model Approval {
   date        String
   status      String
   note        String         @default("")
+  viaAi       Boolean        @default(false)
   createdAt   DateTime       @default(now())
   steps       ApprovalStep[]
 }
@@ -259,8 +278,9 @@ model Meeting {
   date      String
   time      String
   status    String
-  minutes   String            @default("")
-  attendees MeetingAttendee[]
+  minutes      String            @default("")
+  minutesViaAi Boolean           @default(false)
+  attendees    MeetingAttendee[]
 }
 
 model MeetingAttendee {
@@ -337,4 +357,25 @@ model RealtimeEvent {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+model AppSetting {
+  id                  String    @id @default("app")
+  aiEmployeesEnabled  Boolean   @default(true)
+  lastTickAt          DateTime?
+  aiCallsDay          String    @default("")
+  aiCallsToday        Int       @default(0)
+}
+
+model AiActivity {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  summary   String
+  viaLlm    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
 }

@@ -67,7 +67,7 @@ export function MeetingsView() {
         </div>
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="row" style={{ flexWrap: 'wrap' }}>
-            <h2 style={{ margin: 0, fontSize: 19 }}>{cur.title}</h2>
+            <h2 style={{ margin: 0, fontSize: 19 }}>{cur.title}</h2>{cur.minutesViaAi ? <span className="badge">AI</span> : null}
             <span className="muted">{fmtMD(cur.date)} {cur.time}</span>
             <div className="grow" style={{ flex: 1 }} />
             <button className="btn" type="button" onClick={() => setJoin(cur)}><Icon name="meet" style={{ width: 15 }} /> 参加する</button>

@@ -7,6 +7,9 @@ import { resetAllowed } from './seed-guard';
 
 async function wipe() {
   const prisma = db();
+  await prisma.taskComment.deleteMany();
+  await prisma.aiActivity.deleteMany();
+  await prisma.appSetting.deleteMany();
   await prisma.realtimeEvent.deleteMany();
   await prisma.reaction.deleteMany();
   await prisma.attachment.deleteMany();

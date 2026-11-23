@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { after } from 'next/server';
 import { db } from '../lib/prisma';
 import { verifyPassword } from '../lib/password';
 import { ROLE_LABEL } from '../lib/format';
@@ -10,6 +11,7 @@ import { answerQuestion, buildAiContext } from './ai';
 import { seedDatabase } from '../lib/seed-run';
 import { llmConfig, streamChat, AI_SYSTEM } from './llm';
 import { deleteObject, getObject, putObject } from './storage';
+import { agentAuthorized, agentContext, applyAgentActions, cronAuthorized, runLightweightTick, setAiEnabled, todayActivity } from './agent';
 
 type DeptUser = NonNullable<Awaited<ReturnType<typeof loadUser>>>;
 
@@ -98,12 +100,14 @@ type MsgJson = {
   reactions: Record<string, string[]>;
   attachments: { id: string; filename: string; mime: string; size: number }[];
   replies: MsgJson[];
+  viaAi: boolean;
 };
 function mapMessage(m: {
   id: string; channelId: string; userId: string; text: string; createdAt: Date;
   reactions?: { emoji: string; userId: string }[];
   attachments?: { id: string; filename: string; mime: string; size: number }[];
   replies?: Parameters<typeof mapMessage>[0][];
+  viaAi?: boolean;
 }): MsgJson {
   return {
     id: m.id,
@@ -111,6 +115,7 @@ function mapMessage(m: {
     userId: m.userId,
     text: m.text,
     ts: m.createdAt.toISOString(),
+    viaAi: Boolean(m.viaAi),
     reactions: groupReactions(m.reactions || []),
     attachments: (m.attachments || []).map(mapAtt),
     replies: (m.replies || []).map((r) => mapMessage(r)),
@@ -176,11 +181,13 @@ function mapTask(t: {
   id: string; title: string; status: string; assigneeId: string; creatorId: string;
   start: string; due: string; priority: string; tag: string;
   subtasks: { id: string; title: string; done: boolean; sort: number }[];
+  comments?: { id: string; userId: string; text: string; viaAi: boolean; createdAt: Date }[];
 }) {
   return {
     id: t.id, title: t.title, status: t.status, assigneeId: t.assigneeId, creatorId: t.creatorId,
     start: t.start, due: t.due, priority: t.priority, tag: t.tag,
     subtasks: t.subtasks.slice().sort((a, b) => a.sort - b.sort).map((s) => ({ id: s.id, title: s.title, done: s.done })),
+    comments: (t.comments || []).map((c) => ({ id: c.id, userId: c.userId, text: c.text, viaAi: c.viaAi, ts: c.createdAt.toISOString() })),
   };
 }
 function mapEvent(e: {
@@ -194,6 +201,7 @@ function mapEvent(e: {
 }
 function mapApproval(a: {
   id: string; type: string; title: string; amount: number; requesterId: string; date: string; status: string; note: string;
+  viaAi?: boolean;
   steps: { id: string; approverId: string; position: number; status: string; decidedAt: Date | null }[];
 }) {
   const steps = a.steps.slice().sort((x, y) => x.position - y.position).map((s) => ({
@@ -202,7 +210,7 @@ function mapApproval(a: {
   }));
   return {
     id: a.id, type: a.type, title: a.title, amount: a.amount, requesterId: a.requesterId,
-    date: a.date, status: a.status, note: a.note, steps,
+    date: a.date, status: a.status, note: a.note, viaAi: Boolean(a.viaAi), steps,
     currentApproverId: currentApproverId(a.steps),
   };
 }
@@ -284,6 +292,9 @@ export async function handleApi(req: Request, partsIn: string[] = []) {
     if (method === 'GET' && parts[0] === 'health') return json({ ok: true, service: 'gix-workspace' });
     if (method === 'POST' && match(parts, 'auth/login')) return login(req);
     if (method === 'POST' && match(parts, 'auth/logout')) return logout(req);
+    if ((method === 'GET' || method === 'POST') && match(parts, 'cron/ai-employees')) return cronTick(req);
+    if (method === 'GET' && match(parts, 'agent/context')) return agentContextRoute(req);
+    if (method === 'POST' && match(parts, 'agent/actions')) return agentActionsRoute(req);
     const user = await getUser(req);
     if (!user) return err('unauthorized', 401);
     return await route(req, method, parts, url, user);
@@ -312,6 +323,26 @@ async function logout(req: Request) {
   return withCookie(json({ ok: true }), '', 0);
 }
 
+function cronTick(req: Request) {
+  if (!cronAuthorized(req)) return err('unauthorized', 401);
+  return runLightweightTick('cron').then((result) => json(result));
+}
+
+function agentContextRoute(req: Request) {
+  if (!agentAuthorized(req)) return err('unauthorized', 401);
+  return agentContext().then((result) => json(result));
+}
+
+async function agentActionsRoute(req: Request) {
+  if (!agentAuthorized(req)) return err('unauthorized', 401);
+  const body = await readBody(req);
+  try {
+    return json(await applyAgentActions(Array.isArray(body.actions) ? body.actions : []));
+  } catch (error) {
+    return err(error instanceof Error ? error.message : '失敗しました', 400);
+  }
+}
+
 async function route(req: Request, method: string, parts: string[], url: URL, user: DeptUser) {
   const path = parts.join('/');
     if (method === 'GET' && path === 'bootstrap') return bootstrap(user);
@@ -320,7 +351,17 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   if (method === 'PATCH' && path === 'me') return patchMe(req, user);
   if (method === 'GET' && path === 'search') return search(user, url.searchParams.get('q') || '');
   if (method === 'POST' && path === 'ai') return ai(req, user);
-  if (method === 'POST' && path === 'admin/reset') return reset(user);
+    if (method === 'POST' && path === 'admin/reset') return reset(user);
+    if (method === 'GET' && path === 'ai-employees') return json(await todayActivity());
+    if (method === 'POST' && path === 'ai-employees/run') {
+      if (user.role !== 'ceo' && user.role !== 'vp') return err('社長と副社長だけが実行できます', 403);
+      return json(await runLightweightTick('manual'));
+    }
+    if (method === 'POST' && path === 'ai-employees/settings') {
+      if (user.role !== 'ceo') return err('設定は社長だけ変更できます', 403);
+      const body = await readBody(req);
+      return json(await setAiEnabled(Boolean(body.enabled)));
+    }
   if (method === 'POST' && path === 'upload') return upload(req, user);
   if (method === 'GET' && match(parts, 'files/:id')) return download(match(parts, 'files/:id')!.id, user);
 
@@ -357,7 +398,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
   }
 
   if (path === 'tasks' && method === 'GET') {
-    const rows = await db().task.findMany({ include: { subtasks: true }, orderBy: { sort: 'asc' } });
+    const rows = await db().task.findMany({ include: { subtasks: true, comments: true }, orderBy: { sort: 'asc' } });
     return json(rows.map(mapTask));
   }
   if (path === 'tasks' && method === 'POST') return saveTask(req, user, null);
@@ -387,7 +428,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
 
   if (path === 'docs' && method === 'GET') {
     const rows = await db().doc.findMany({ include: { attachments: { select: { id: true, filename: true, mime: true, size: true } } } });
-    return json(rows.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, body: d.body, updatedBy: d.updatedBy, updatedOn: d.updatedOn, attachments: d.attachments.map(mapAtt) })));
+    return json(rows.map((d) => ({ id: d.id, folderId: d.folderId, title: d.title, body: d.body, updatedBy: d.updatedBy, updatedOn: d.updatedOn, viaAi: d.viaAi, attachments: d.attachments.map(mapAtt) })));
   }
   if (path === 'docs' && method === 'POST') return saveDoc(req, user, null);
   const docAtt = match(parts, 'docs/:id/attach');
@@ -437,7 +478,7 @@ async function route(req: Request, method: string, parts: string[], url: URL, us
 
   if (path === 'meetings' && method === 'GET') {
     const rows = await db().meeting.findMany({ include: { attendees: true } });
-    return json(rows.map((m) => ({ id: m.id, title: m.title, date: m.date, time: m.time, status: m.status, minutes: m.minutes, attendees: m.attendees.map((a) => a.userId) })));
+    return json(rows.map((m) => ({ id: m.id, title: m.title, date: m.date, time: m.time, status: m.status, minutes: m.minutes, minutesViaAi: m.minutesViaAi, attendees: m.attendees.map((a) => a.userId) })));
   }
   if (path === 'meetings' && method === 'POST') return saveMeeting(req, user, null);
   const mt = match(parts, 'meetings/:id');
@@ -479,6 +520,9 @@ async function bootstrap(user: DeptUser) {
     countsFor(user.id),
     db().attendance.findUnique({ where: { userId_date: { userId: user.id, date: todayYMD() } } }),
   ]);
+  if (process.env.NODE_ENV !== 'test') {
+    try { after(() => { void runLightweightTick('visit').catch((error) => console.error(error)); }); } catch { /* outside a request */ }
+  }
   return json({
     me: publicMember(user),
     members: members.map(publicMember),

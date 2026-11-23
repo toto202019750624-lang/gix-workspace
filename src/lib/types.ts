@@ -44,6 +44,7 @@ export type Task = {
   priority: string;
   tag: string;
   subtasks: { id: string; title: string; done: boolean }[];
+  comments?: { id: string; userId: string; text: string; viaAi: boolean; ts: string }[];
 };
 
 export type CalEvent = {
@@ -67,6 +68,7 @@ export type Approval = {
   date: string;
   status: string;
   note: string;
+  viaAi?: boolean;
   currentApproverId: string | null;
   steps: { id: string; approverId: string; order: number; status: string; decidedAt: string | null }[];
 };
@@ -88,6 +90,7 @@ export type ChatMessage = {
   channelId: string;
   userId: string;
   text: string;
+  viaAi?: boolean;
   ts: string;
   reactions: Record<string, string[]>;
   attachments: Attachment[];
@@ -101,6 +104,7 @@ export type Doc = {
   body: string;
   updatedBy: string;
   updatedOn: string;
+  viaAi?: boolean;
   attachments?: Attachment[];
 };
 
@@ -125,6 +129,7 @@ export type Meeting = {
   time: string;
   status: string;
   minutes: string;
+  minutesViaAi?: boolean;
   attendees: string[];
 };
 

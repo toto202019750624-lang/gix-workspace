@@ -206,6 +206,7 @@ function TaskForm({ task, members, onClose, onSave, onDelete }: { task: Task; me
         </div>
         <button className="btn sm" type="button" onClick={() => setT({ ...t, subtasks: [...t.subtasks, { id: '', title: '', done: false }] })}>＋ サブタスク追加</button>
       </Field>
+      {t.comments?.length ? <Field label="コメント">{t.comments.map((c) => <div key={c.id} className="small" style={{ marginBottom: 6 }}>{c.viaAi ? <span className="badge">AI</span> : null} {c.text}</div>)}</Field> : null}
     </Modal>
   );
 }

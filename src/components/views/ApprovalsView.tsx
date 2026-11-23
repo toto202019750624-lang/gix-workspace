@@ -81,7 +81,7 @@ function ApprovalCard({ a, meId, onDecide }: { a: Approval; meId: string; onDeci
       <div className="row" style={{ flexWrap: 'wrap' }}>
         <span style={{ fontSize: 22 }}>{icon}</span>
         <div style={{ flex: 1, minWidth: 200 }}>
-          <div className="row"><b>{a.title}</b><span className={`badge ${ST[a.status]?.[1] || 'b-m'}`}>{ST[a.status]?.[0] || a.status}</span><span className="badge b-m">{a.type}</span></div>
+          <div className="row"><b>{a.title}</b>{a.viaAi ? <span className="badge">AI</span> : null}<span className={`badge ${ST[a.status]?.[1] || 'b-m'}`}>{ST[a.status]?.[0] || a.status}</span><span className="badge b-m">{a.type}</span></div>
           <div className="small muted" style={{ marginTop: 3 }}>申請者 {member(a.requesterId).name} ・ {fmtMD(a.date)}{a.amount ? <> ・ <b style={{ color: 'var(--text)' }}>{yen(a.amount)}</b></> : null}{a.note ? ` ・ ${a.note}` : ''}</div>
           <div className="row small" style={{ marginTop: 10, gap: 6, flexWrap: 'wrap' }}>
             <span className="row" style={{ gap: 5 }}><Avatar member={member(a.requesterId)} size="sm" /><span className="muted">{member(a.requesterId).name}</span><span className="faint">申請</span></span>

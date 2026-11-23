@@ -207,7 +207,7 @@ function Msg({ m, names, meId, inThread, onReact, onThread, onEmoji }: {
     <div className="msg" id={`m-${m.id}`}>
       <Avatar member={u} />
       <div className="body">
-        <b>{u.name}</b>{u.isBot ? <span className="badge">BOT</span> : null}<span className="meta">{when}</span>
+        <b>{u.name}</b>{u.isBot ? <span className="badge">BOT</span> : null}{m.viaAi ? <span className="badge">AI</span> : null}<span className="meta">{when}</span>
         <div className="txt"><MessageText text={m.text} names={names} /></div>
         {m.attachments?.map((a) => a.mime.startsWith('image/')
           ? <a className="attach" key={a.id} href={`/api/files/${a.id}`} target="_blank" rel="noreferrer"><img src={`/api/files/${a.id}`} alt={a.filename} /></a>

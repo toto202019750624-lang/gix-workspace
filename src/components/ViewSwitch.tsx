@@ -12,6 +12,7 @@ import { MeetingsView } from './views/MeetingsView';
 import { MembersView } from './views/MembersView';
 import { AttendanceView } from './views/AttendanceView';
 import { OkrView } from './views/OkrView';
+import { AiStaffView } from './views/AiStaffView';
 
 const VIEWS: Record<string, () => React.JSX.Element> = {
   home: HomeView,
@@ -25,6 +26,7 @@ const VIEWS: Record<string, () => React.JSX.Element> = {
   members: MembersView,
   attendance: AttendanceView,
   okr: OkrView,
+  'ai-staff': AiStaffView,
 };
 
 export function ViewSwitch() {

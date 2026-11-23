@@ -8,6 +8,7 @@ import { buildSeed, SEED_USERS } from './seed-data';
 import { initials, yen } from './format';
 import { resetAllowed } from './seed-guard';
 import { placeEvents } from './calendar-layout';
+import { planTemplate, sanitizeAction, shouldAutoTick, workPhase } from './ai-rhythm';
 import { llmConfig, streamChat } from '../server/llm';
 import { deleteObject, getObject, putObject, storageDriver } from '../server/storage';
 import { mkdtempSync } from 'node:fs';
@@ -164,5 +165,23 @@ describe('production helpers', () => {
     expect(got?.body.toString()).toBe('hello-gix');
     await deleteObject(key);
     expect(await getObject(key)).toBeNull();
+  });
+
+  test('weekday phases and lightweight plans', () => {
+    const mondayMorning = new Date('2026-11-23T00:30:00Z');
+    const mondayNoon = new Date('2026-11-23T03:00:00Z');
+    const mondayEvening = new Date('2026-11-23T08:30:00Z');
+    const sunday = new Date('2026-11-22T03:00:00Z');
+    expect(workPhase(mondayMorning)).toBe('morning');
+    expect(workPhase(mondayNoon)).toBe('day');
+    expect(workPhase(mondayEvening)).toBe('evening');
+    expect(workPhase(sunday)).toBe('off');
+    expect(shouldAutoTick({ enabled: true, lastTickAt: null, now: mondayMorning, minMinutes: 20, phase: 'morning' })).toBe(true);
+    expect(shouldAutoTick({ enabled: false, lastTickAt: null, now: mondayMorning, minMinutes: 20, phase: 'morning' })).toBe(false);
+    const emp = { id: 'sato', name: '佐藤 陽菜', role: 'manager', title: '企画部 部長', deptId: 'plan', skills: ['企画'] };
+    const morning = planTemplate({ emp, phase: 'morning', clockedIn: false, inboxOwner: null, inboxOther: null, colleague: null, task: null, pending: null, meeting: null });
+    expect(morning.some((a) => a.type === 'clock' && a.action === 'in')).toBe(true);
+    expect(sanitizeAction({ type: 'post', channelId: 'plan', text: '了解です' }, emp)?.type).toBe('post');
+    expect(sanitizeAction({ type: 'nope' }, emp)).toBeNull();
   });
 });
