@@ -166,6 +166,19 @@ test('bot replies in a direct message and attendance is per user', async () => {
   expect(own.some((r: { outTime: string | null }) => r.outTime)).toBe(true);
 });
 
+test('agent API refuses every request when AGENT_API_TOKEN is unset', async () => {
+  const prev = process.env.AGENT_API_TOKEN;
+  delete process.env.AGENT_API_TOKEN;
+  try {
+    expect((await call('GET', '/api/agent/context')).status).toBe(401);
+    expect((await call('GET', '/api/agent/context', { token: 'anything' })).status).toBe(401);
+    expect((await call('POST', '/api/agent/actions', { json: { actions: [] } })).status).toBe(401);
+    expect((await call('POST', '/api/agent/actions', { token: prev, json: { actions: [] } })).status).toBe(401);
+  } finally {
+    process.env.AGENT_API_TOKEN = prev;
+  }
+});
+
 test('agent API writes as an employee and cron is protected', async () => {
   const denied = await call('GET', '/api/agent/context');
   expect(denied.status).toBe(401);
