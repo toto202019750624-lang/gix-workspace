@@ -94,7 +94,7 @@ Postgres が `postgresql://gix:gix@127.0.0.1:5432/gix_test` で起動してい�
 3. 環境変数に少なくとも `DATABASE_URL`、`DIRECT_URL`、`AUTH_SECRET` を Production と Preview の両方へ入れる
 4. 添付を残すなら Blob をリンクして `BLOB_READ_WRITE_TOKEN` を入れ、`STORAGE_DRIVER=blob` にする。または S3 互換の4変数と `STORAGE_DRIVER=s3`
 5. AI社員を無人で出勤させるなら `CRON_SECRET` を入れる。文章を書かせる Grok Bot 用に `AGENT_API_TOKEN` も入れる。チャット欄のAIは任意で、`OPENAI_API_KEY` か `XAI_API_KEY` が無いときは定型応答のままです
-6. デプロイする。Vercel のビルドはマイグレーションのあと初期データを入れ、そのあと `next build` します。データが既にあるデプロイではシードは何もしません。手元から本番の Postgres に接続する必要はありません。AI社員は最初からオンです
+6. デプロイする。本番（`VERCEL_ENV=production`）のビルドだけがマイグレーションと初期データ投入を行い、そのあと `next build` します。プレビューは `prisma generate` と `next build` だけです。データが既にある本番デプロイではシードは何もしません。手元から本番の Postgres に接続する必要はありません。AI社員は最初からオンです
 
 Vercel 上のリアルタイムは約2.5秒のポーリングです。SSE は使いません。
 
